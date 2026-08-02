@@ -1,0 +1,130 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<div class="grid-2">
+  <div>
+    <h2 style="margin-bottom:12px;">💬 Support & Help</h2>
+    <p style="margin-bottom:24px;color:var(--text-gray);">We're here to help. Get in touch with our Australian support team or find answers in our comprehensive help centre.</p>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">📞 Contact Us</h3></div>
+      <div class="card-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+          <div style="padding:16px;background:var(--bg-gray);border-radius:var(--radius);">
+            <div style="font-size:1.5rem;margin-bottom:4px;">📞</div>
+            <div style="font-weight:700;font-size:1rem;margin-bottom:4px;">Phone</div>
+            <div style="font-weight:800;color:var(--primary);font-size:1.1rem;">1300 UCBANK</div>
+            <div style="font-size:0.8rem;color:var(--text-light);">Mon-Fri 8am-8pm AEST</div>
+          </div>
+          <div style="padding:16px;background:var(--bg-gray);border-radius:var(--radius);">
+            <div style="font-size:1.5rem;margin-bottom:4px;">✉️</div>
+            <div style="font-weight:700;font-size:1rem;margin-bottom:4px;">Email</div>
+            <div style="font-weight:800;color:var(--primary);font-size:0.95rem;">support@ucbank.com.au</div>
+            <div style="font-size:0.8rem;color:var(--text-light);">Reply within 24 business hrs</div>
+          </div>
+          <div style="padding:16px;background:var(--bg-gray);border-radius:var(--radius);">
+            <div style="font-size:1.5rem;margin-bottom:4px;">💬</div>
+            <div style="font-weight:700;font-size:1rem;margin-bottom:4px;">Live Chat</div>
+            <div style="font-weight:800;color:var(--success);font-size:0.95rem;">● Available Now</div>
+            <div style="font-size:0.8rem;color:var(--text-light);">Avg wait: &lt; 2 min</div>
+          </div>
+          <div style="padding:16px;background:var(--bg-gray);border-radius:var(--radius);">
+            <div style="font-size:1.5rem;margin-bottom:4px;">🏦</div>
+            <div style="font-weight:700;font-size:1rem;margin-bottom:4px;">Visit Branch</div>
+            <div style="font-weight:800;color:var(--primary);font-size:0.95rem;">58 Branches AU-Wide</div>
+            <div style="font-size:0.8rem;color:var(--text-light);">Find your nearest branch</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">🚨 Emergency & Lost Cards</h3></div>
+      <div class="card-body">
+        <div class="alert alert-danger">
+          <span class="alert-icon">🚨</span>
+          <div class="alert-content">
+            <div class="alert-title">Lost or stolen card?</div>
+            <p class="alert-message">Call our 24/7 emergency line immediately to block your card.</p>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:16px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:200px;padding:16px;border:1.5px dashed var(--danger);border-radius:var(--radius);text-align:center;">
+            <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-light);">🇦🇺 Australia (Free)</div>
+            <div style="font-size:1.3rem;font-weight:800;color:var(--danger);margin-top:4px;">1800 822 265</div>
+            <div style="font-size:0.8rem;color:var(--text-gray);">24/7 Available</div>
+          </div>
+          <div style="flex:1;min-width:200px;padding:16px;border:1.5px dashed var(--danger);border-radius:var(--radius);text-align:center;">
+            <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-light);">🌍 Overseas</div>
+            <div style="font-size:1.3rem;font-weight:800;color:var(--danger);margin-top:4px;">+61 2 8000 0000</div>
+            <div style="font-size:0.8rem;color:var(--text-gray);">Reverse charges accepted</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">❓ Frequently Asked Questions</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div class="faq-item">
+          <button class="faq-toggle" style="width:100%;padding:20px 24px;text-align:left;background:none;border:none;border-bottom:1px solid var(--border);cursor:pointer;font-family:inherit;font-weight:600;font-size:0.95rem;display:flex;justify-content:space-between;align-items:center;" onclick="this.nextElementSibling.classList.toggle('active');this.querySelector('.chevron').style.transform=this.nextElementSibling.classList.contains('active')?'rotate(180deg)':'rotate(0deg)';">
+            <span>How do I change my daily transfer limit?</span>
+            <span class="chevron" style="transition:transform 0.2s;">▼</span>
+          </button>
+          <div class="faq-content" style="display:none;padding:0 24px 20px;color:var(--text-gray);font-size:0.9rem;">
+            Log into your internet banking, go to Settings → Daily Limits. You can adjust your limits up to $25,000 per day immediately. For higher limits, please contact support or visit a branch with ID.
+          </div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-toggle" style="width:100%;padding:20px 24px;text-align:left;background:none;border:none;border-bottom:1px solid var(--border);cursor:pointer;font-family:inherit;font-weight:600;font-size:0.95rem;display:flex;justify-content:space-between;align-items:center;" onclick="this.nextElementSibling.classList.toggle('active');this.querySelector('.chevron').style.transform=this.nextElementSibling.classList.contains('active')?'rotate(180deg)':'rotate(0deg)';">
+            <span>How long do international transfers take?</span>
+            <span class="chevron" style="transition:transform 0.2s;">▼</span>
+          </button>
+          <div class="faq-content" style="display:none;padding:0 24px 20px;color:var(--text-gray);font-size:0.9rem;">
+            Most international transfers arrive within 1-3 business days. Popular currencies (USD, GBP, EUR, NZD) typically arrive same day or next business day. You'll receive an email when the transfer is complete.
+          </div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-toggle" style="width:100%;padding:20px 24px;text-align:left;background:none;border:none;border-bottom:1px solid var(--border);cursor:pointer;font-family:inherit;font-weight:600;font-size:0.95rem;display:flex;justify-content:space-between;align-items:center;" onclick="this.nextElementSibling.classList.toggle('active');this.querySelector('.chevron').style.transform=this.nextElementSibling.classList.contains('active')?'rotate(180deg)':'rotate(0deg)';">
+            <span>What is your government guarantee?</span>
+            <span class="chevron" style="transition:transform 0.2s;">▼</span>
+          </button>
+          <div class="faq-content" style="display:none;padding:0 24px 20px;color:var(--text-gray);font-size:0.9rem;">
+            United Credit Bank is an Authorised Deposit-taking Institution (ADI) regulated by APRA. Deposits up to $250,000 per account holder are guaranteed by the Australian Government under the Financial Claims Scheme (FCS).
+          </div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-toggle" style="width:100%;padding:20px 24px;text-align:left;background:none;border:none;border-bottom:1px solid var(--border);cursor:pointer;font-family:inherit;font-weight:600;font-size:0.95rem;display:flex;justify-content:space-between;align-items:center;" onclick="this.nextElementSibling.classList.toggle('active');this.querySelector('.chevron').style.transform=this.nextElementSibling.classList.contains('active')?'rotate(180deg)':'rotate(0deg)';">
+            <span>How do I report unauthorised transactions?</span>
+            <span class="chevron" style="transition:transform 0.2s;">▼</span>
+          </button>
+          <div class="faq-content" style="display:none;padding:0 24px 20px;color:var(--text-gray);font-size:0.9rem;">
+            If you notice an unauthorised transaction, call our 24/7 fraud hotline immediately at 1800 822 265. We will investigate the transaction and refund you within 10 business days if it's confirmed to be fraudulent under our Zero-Liability policy.
+          </div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-toggle" style="width:100%;padding:20px 24px;text-align:left;background:none;border:none;border-bottom:1px solid var(--border);cursor:pointer;font-family:inherit;font-weight:600;font-size:0.95rem;display:flex;justify-content:space-between;align-items:center;" onclick="this.nextElementSibling.classList.toggle('active');this.querySelector('.chevron').style.transform=this.nextElementSibling.classList.contains('active')?'rotate(180deg)':'rotate(0deg)';">
+            <span>Can I open a joint account?</span>
+            <span class="chevron" style="transition:transform 0.2s;">▼</span>
+          </button>
+          <div class="faq-content" style="display:none;padding:0 24px 20px;color:var(--text-gray);font-size:0.9rem;">
+            Yes! Joint accounts are available for 2-4 account holders. All parties must complete KYC verification. You can apply for a joint account at any branch or by booking an appointment with our accounts team via phone.
+          </div>
+        </div>
+        <div class="faq-item" style="border:none;">
+          <button class="faq-toggle" style="width:100%;padding:20px 24px;text-align:left;background:none;border:none;cursor:pointer;font-family:inherit;font-weight:600;font-size:0.95rem;display:flex;justify-content:space-between;align-items:center;" onclick="this.nextElementSibling.classList.toggle('active');this.querySelector('.chevron').style.transform=this.nextElementSibling.classList.contains('active')?'rotate(180deg)':'rotate(0deg)';">
+            <span>How do I close my account?</span>
+            <span class="chevron" style="transition:transform 0.2s;">▼</span>
+          </button>
+          <div class="faq-content" style="display:none;padding:0 24px 20px;color:var(--text-gray);font-size:0.9rem;">
+            To close your account, please ensure your balance is $0 and any cards are destroyed. You can close it online by going to Accounts → Settings → Close Account, visit a branch, or call our support team. We process closures within 2 business days.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/layouts/user-end') -%>
+

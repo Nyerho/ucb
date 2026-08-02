@@ -1,0 +1,114 @@
+<%- include('../partials/layouts/admin-start') -%>
+
+<h2 style="margin-bottom:16px;">⚙️ Admin Settings</h2>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">👑 Admin Users</h3>
+      <button class="btn btn-primary btn-sm" onclick="document.getElementById('newAdmin').classList.add('active')">➕ New Admin</button>
+    </div>
+    <div class="card-body" style="padding:0;">
+      <% admins.forEach(a => { %>
+        <div style="padding:16px 24px;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:center;">
+          <div class="user-avatar" style="width:44px;height:44px;font-size:0.95rem;background:linear-gradient(135deg,#111,#374151);color:white;">
+            <%= (a.first_name||'A').charAt(0)+(a.last_name||'').charAt(0) %>
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:700;font-size:0.95rem;"><%= a.first_name %> <%= a.last_name %></div>
+            <div style="font-size:0.82rem;color:var(--text-light);">📧 <%= a.email %> • 📱 <%= a.phone %></div>
+          </div>
+          <div style="text-align:right;">
+            <span class="status-badge status-active" style="margin-bottom:4px;">
+              <%= a.role === 'super_admin' ? '👑 GOD ADMIN' : '⭐ ADMIN' %>
+            </span>
+            <div style="font-size:0.72rem;color:var(--text-light);">
+              Last: <%= a.last_login ? moment(a.last_login).format('DD MMM HH:mm') : 'Never' %>
+            </div>
+          </div>
+        </div>
+      <% }) %>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">🏦 System Settings</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <div><div style="font-weight:600;font-size:0.92rem;">Approval threshold (transfers)</div>
+            <div style="font-size:0.78rem;color:var(--text-light);">Amounts above require admin review</div></div>
+          <strong style="color:var(--primary);">$5,000.00</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <div><div style="font-weight:600;font-size:0.92rem;">Bill payment approval</div>
+            <div style="font-size:0.78rem;color:var(--text-light);">Bills above require review</div></div>
+          <strong style="color:var(--primary);">$3,000.00</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <div><div style="font-weight:600;font-size:0.92rem;">Withdrawal auto approval</div>
+            <div style="font-size:0.78rem;color:var(--text-light);">Instant below this amount</div></div>
+          <strong style="color:var(--primary);">$5,000.00</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <div><div style="font-weight:600;font-size:0.92rem;">Deposit review limit</div>
+            <div style="font-size:0.78rem;color:var(--text-light);">AML/CTF review threshold</div></div>
+          <strong style="color:var(--primary);">$10,000.00</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;">
+          <div><div style="font-weight:600;font-size:0.92rem;">Intl transfer fee</div>
+            <div style="font-size:0.78rem;color:var(--text-light);">Flat per transaction</div></div>
+          <strong style="color:var(--primary);">$25.00</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">🗒️ Session Info</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div style="display:flex;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Logged in as</span><strong><%= user.email %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Role</span><strong>Super Admin (GOD)</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:12px 20px;">
+          <span style="color:var(--text-gray);">Session expires</span><strong><%= moment().add(24,'hours').format('DD MMM HH:mm') %></strong>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="newAdmin"><div class="modal-dialog" style="max-width:560px;">
+  <div class="modal-header"><h3 class="modal-title">➕ Create New Admin</h3>
+  <button class="modal-close" onclick="document.getElementById('newAdmin').classList.remove('active')">✕</button></div>
+  <form method="POST" action="/admin/settings/create-admin">
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">First Name *</label><input type="text" name="first_name" required class="form-input"></div>
+        <div class="form-group"><label class="form-label">Last Name *</label><input type="text" name="last_name" required class="form-input"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Email *</label><input type="email" name="email" required class="form-input" placeholder="admin@ucbank.com.au"></div>
+        <div class="form-group"><label class="form-label">Phone *</label><input type="tel" name="phone" required class="form-input"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Password *</label><input type="password" name="password" required minlength="8" class="form-input"></div>
+        <div class="form-group"><label class="form-label">Role</label>
+          <select name="role" class="form-select"><option value="admin">Admin</option><option value="super_admin">Super / God Admin</option></select>
+        </div>
+      </div>
+      <div class="alert alert-warning"><span class="alert-icon">⚠️</span>
+        <div class="alert-content"><div class="alert-title">Security Notice</div>
+        <p class="alert-message" style="margin:0;">Admins have full access to customer data and operations. Only grant to trusted staff.</p></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-light" onclick="document.getElementById('newAdmin').classList.remove('active')">Cancel</button>
+      <button type="submit" class="btn btn-primary">✅ Create Admin</button>
+    </div>
+  </form>
+</div></div>
+
+<%- include('../partials/layouts/admin-end') -%>
+

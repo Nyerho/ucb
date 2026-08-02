@@ -1,0 +1,7 @@
+node_modules/
+.sessions/
+database.db
+database.db-wal
+database.db-shm
+.env
+npm-debug.log*

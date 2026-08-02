@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#C8102E">
+  <title><%= title %></title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23C8102E'/><text x='50' y='62' font-size='48' font-family='Arial' font-weight='800' text-anchor='middle' fill='white'>U</text></svg>">
+</head>
+<body class="auth-wrap">
+  <div class="auth-card auth-card-wide">
+    <div class="auth-side">
+      <div class="auth-side-content">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:40px;">
+          <div class="brand-logo" style="width:48px;height:48px;border-radius:12px;background:rgba(255,255,255,0.18);display:flex;align-items:center;justify-content:center;color:white;font-weight:800;">UCB</div>
+          <div>
+            <div style="font-weight:800;color:white;font-size:1.1rem;">United Credit Bank</div>
+            <div style="font-size:0.75rem;opacity:0.8;">🇦🇺 Australia's Trusted Bank</div>
+          </div>
+        </div>
+        <h2>Welcome back to digital banking.</h2>
+        <p>Secure access to your accounts, 24/7.</p>
+        <ul class="auth-side-features">
+          <li>Real-time balance and transaction tracking</li>
+          <li>Instant transfers with BPAY and Osko</li>
+          <li>International payments to 100+ countries</li>
+          <li>Military-grade 256-bit security encryption</li>
+          <li>Australian support team 7 days a week</li>
+        </ul>
+      </div>
+      <div style="position:relative;z-index:2;">
+        <div class="bank-card" style="aspect-ratio:auto;padding:20px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <span style="font-weight:700;">UCB PLATINUM</span>
+            <span style="font-size:0.7rem;padding:3px 8px;background:rgba(255,255,255,0.2);border-radius:999px;">VISA</span>
+          </div>
+          <div class="bank-card-chip" style="width:36px;height:28px;margin-bottom:16px;"></div>
+          <div style="font-family:'Courier New';font-size:1rem;letter-spacing:2px;margin-bottom:12px;">4539 •••• •••• 2026</div>
+        </div>
+      </div>
+    </div>
+    <div class="auth-form-wrap">
+      <div class="auth-header">
+        <h1>Sign in to your account</h1>
+        <p>Secure access with your email and password</p>
+      </div>
+
+      <% if (typeof error !== 'undefined' && error) { %>
+        <div class="form-alert form-alert-error">⚠️ <%= error %></div>
+      <% } %>
+      <% if (typeof success !== 'undefined' && success) { %>
+        <div class="form-alert form-alert-success">✓ <%= success %></div>
+      <% } %>
+
+      <form action="/auth/login" method="POST" id="loginForm">
+        <div class="form-group">
+          <label class="form-label">Email Address</label>
+          <input type="email" name="email" class="form-input" placeholder="you@example.com" required autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" name="password" class="form-input" placeholder="Enter your password" required autocomplete="current-password">
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:0.9rem;color:var(--text-gray);cursor:pointer;">
+            <input type="checkbox" name="remember" style="width:16px;height:16px;"> Remember me
+          </label>
+          <a href="/auth/forgot-password" style="font-weight:500;font-size:0.9rem;">Forgot password?</a>
+        </div>
+        <button type="submit" class="btn btn-primary btn-lg btn-block">🔐 Sign In to Internet Banking</button>
+      </form>
+
+      <div style="margin-top:24px;padding:16px;background:var(--bg-gray);border-radius:var(--radius-sm);">
+        <div style="font-weight:600;font-size:0.85rem;margin-bottom:8px;">💡 Quick Demo Accounts</div>
+        <div style="font-size:0.8rem;color:var(--text-gray);line-height:1.6;">
+          <div><strong>Admin:</strong> admin@unitedcreditbank.com.au / Admin@2026</div>
+          <div><strong>Customer:</strong> john.smith@email.com.au / Customer@2026</div>
+        </div>
+      </div>
+
+      <div class="auth-footer">
+        New to United Credit Bank? <a href="/auth/register" style="font-weight:600;">Open a free account</a>
+      </div>
+    </div>
+  </div>
+  <script src="/js/common.js"></script>
+  <script src="/js/auth.js"></script>
+</body>
+</html>

@@ -1,0 +1,395 @@
+<%- include('../partials/layouts/admin-start') -%>
+
+<a href="/admin/users" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← All Users</a>
+
+<% 
+  const uTotal = (accounts || []).reduce((s,a)=>s+parseFloat(a.balance||0),0);
+%>
+
+<div class="card" style="margin-bottom:20px;">
+  <div class="card-body" style="padding:24px 28px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap;">
+      <div style="display:flex;gap:18px;align-items:center;">
+        <div class="user-avatar" style="width:72px;height:72px;font-size:1.5rem;"><%= (customer.first_name||'?').charAt(0)+(customer.last_name||'').charAt(0) %></div>
+        <div>
+          <h2 style="margin:0;font-size:1.4rem;"><%= customer.first_name %> <%= customer.last_name %></h2>
+          <div style="color:var(--text-gray);font-size:0.92rem;">
+            UCB-<%= String(customer.id).padStart(6, '0') %> • 📧 <%= customer.email %> • 📱 <%= customer.phone %>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+            <% if (customer.is_frozen) { %><span class="status-badge status-frozen">❄️ Account Frozen</span>
+            <% } else { %><span class="status-badge status-active">● Active</span><% } %>
+            <% if (customer.is_verified) { %><span class="status-badge status-completed">✓ KYC Verified</span>
+            <% } else { %><span class="status-badge status-pending">⏳ KYC Pending</span><% } %>
+            <% if (customer.is_admin) { %><span class="status-badge status-rejected">👑 ADMIN</span><% } %>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="document.getElementById('editUserModal').classList.add('active')">✏️ Edit</button>
+        <% if (!customer.is_admin) { %>
+          <a href="/admin/users/<%= customer.id %>/freeze" class="btn btn-warning"><%= customer.is_frozen ? '🔥 Unfreeze' : '❄️ Freeze' %></a>
+        <% } %>
+        <button class="btn btn-outline" onclick="document.getElementById('pwModal').classList.add('active')">🔐 Reset PW</button>
+        <a href="/admin/transactions/new?user_id=<%= customer.id %>" class="btn btn-light">➕ Add Transaction</a>
+        <form method="POST" action="/admin/users/<%= customer.id %>/delete" onsubmit="return confirm('Permanently delete this customer? This cannot be undone.');" style="display:inline;">
+          <button class="btn btn-danger">🗑️ Delete</button>
+        </form>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:22px;padding-top:22px;border-top:1px solid var(--border);">
+      <div class="mini-stat">
+        <div class="mini-stat-label">Total Balance</div>
+        <div class="mini-stat-value" style="color:var(--primary);"><%= currency(uTotal) %></div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-label">Accounts</div>
+        <div class="mini-stat-value"><%= (accounts||[]).length %></div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-label">Active Cards</div>
+        <div class="mini-stat-value"><%= (cards||[]).filter(c=>c.status==='active').length %></div>
+      </div>
+      <div class="mini-stat">
+        <div class="mini-stat-label">Active Loans</div>
+        <div class="mini-stat-value" style="color:var(--warning);"><%= (loans||[]).filter(l=>l.status==='active').length %></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;overflow-x:auto;padding-bottom:4px;">
+  <button class="btn btn-primary btn-sm tab-btn active" data-tab="overview">📊 Overview</button>
+  <button class="btn btn-light btn-sm tab-btn" data-tab="accounts">🏦 Accounts (<%= (accounts||[]).length %>)</button>
+  <button class="btn btn-light btn-sm tab-btn" data-tab="tx">💸 Transactions</button>
+  <button class="btn btn-light btn-sm tab-btn" data-tab="cards">💳 Cards (<%= (cards||[]).length %>)</button>
+  <button class="btn btn-light btn-sm tab-btn" data-tab="loans">🏦 Loans (<%= (loans||[]).length %>)</button>
+  <button class="btn btn-light btn-sm tab-btn" data-tab="kyc">🆔 KYC</button>
+  <button class="btn btn-light btn-sm tab-btn" data-tab="notif">🔔 Notifications</button>
+  <button class="btn btn-light btn-sm tab-btn" data-tab="audit">📜 Activity Log</button>
+</div>
+
+<div class="tab-content" id="tab-overview">
+  <div class="grid-2">
+    <div class="card"><div class="card-header"><h3 class="card-title">🏦 Accounts</h3><a href="/admin/accounts?user=<%= customer.id %>" class="btn btn-outline btn-sm">All</a></div>
+      <div class="card-body" style="padding:0;">
+        <% if (!accounts || accounts.length === 0) { %><div class="empty-state" style="padding:32px;">No accounts</div><% } %>
+        <% accounts.forEach(a => { %>
+          <div style="padding:13px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <div style="font-weight:600;"><%= a.account_type %></div>
+              <div style="font-size:0.78rem;color:var(--text-light);font-family:monospace;">BSB <%= a.bsb %> • <%= a.account_number %></div>
+            </div>
+            <div style="text-align:right;"><div style="font-weight:800;"><%= currency(a.balance) %></div>
+            <span class="status-badge status-<%= a.status %>" style="font-size:0.65rem;"><%= a.status %></span></div>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+    <div class="card"><div class="card-header"><h3 class="card-title">💸 Recent Transactions</h3><a href="/admin/transactions?user=<%= customer.id %>" class="btn btn-outline btn-sm">All</a></div>
+      <div class="card-body" style="padding:0;">
+        <% if (!transactions || transactions.length === 0) { %><div class="empty-state" style="padding:32px;">No transactions</div><% } %>
+        <% transactions.slice(0, 8).forEach(tx => { %>
+          <div style="padding:11px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-size:0.88rem;">
+            <div><%= tx.recipient_name || tx.transaction_type.replace(/_/g,' ') %><div style="font-size:0.72rem;color:var(--text-light);"><%= moment(tx.created_at).format('DD MMM HH:mm') %></div></div>
+            <div style="text-align:right;">
+              <div style="font-weight:700;color:<%= parseFloat(tx.amount)<0?'var(--danger)':'var(--success)' %>;"><%= currency(tx.amount) %></div>
+              <span class="status-badge status-<%= tx.status %>" style="font-size:0.6rem;"><%= tx.status %></span>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-accounts" style="display:none;">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">🏦 User Accounts</h3>
+      <button class="btn btn-primary btn-sm" onclick="document.getElementById('openAccModal').classList.add('active')">➕ Open Account</button>
+    </div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>Type</th><th>BSB • Number</th><th style="text-align:right;">Balance</th><th>Status</th><th>Opened</th><th>Actions</th></tr></thead>
+    <tbody><% (accounts||[]).forEach(a => { %>
+      <tr><td><strong><%= a.account_type %></strong></td>
+      <td style="font-family:monospace;">BSB <%= a.bsb %> • <%= a.account_number %></td>
+      <td style="text-align:right;font-weight:700;"><%= currency(a.balance) %></td>
+      <td><span class="status-badge status-<%= a.status %>"><%= a.status %></span></td>
+      <td><%= moment(a.opened_date || a.created_at).format('DD MMM YYYY') %></td>
+      <td><a href="/admin/accounts/<%= a.id %>" class="btn btn-light btn-sm">View</a>
+        <a href="/admin/transactions/new?account_id=<%= a.id %>" class="btn btn-outline btn-sm">Add Tx</a>
+        <form method="POST" action="/admin/accounts/<%= a.id %>/status" style="display:inline;">
+          <select name="status" onchange="this.form.submit()" class="form-select" style="padding:4px 8px;font-size:0.78rem;">
+            <option value="active" <%= a.status === 'active' ? 'selected' : '' %>>active</option>
+            <option value="frozen" <%= a.status === 'frozen' ? 'selected' : '' %>>frozen</option>
+            <option value="closed" <%= a.status === 'closed' ? 'selected' : '' %>>closed</option>
+          </select>
+        </form>
+      </td></tr>
+    <% }) %></tbody></table></div>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-tx" style="display:none;">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">💸 Transactions (50 latest)</h3>
+      <button class="btn btn-outline btn-sm" onclick="document.getElementById('balAdjModal').classList.add('active')">💰 Balance Adjustment</button>
+    </div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Type</th><th>Description</th><th style="text-align:right;">Amount</th><th>Status</th></tr></thead>
+    <tbody><% (transactions||[]).forEach(tx => { %>
+      <tr><td><%= moment(tx.created_at).format('DD MMM YYYY HH:mm') %></td>
+      <td><%= tx.transaction_type.replace(/_/g,' ') %></td>
+      <td><%= tx.recipient_name || tx.description || '—' %></td>
+      <td style="text-align:right;font-weight:700;color:<%= parseFloat(tx.amount)<0?'var(--danger)':'var(--success)' %>;"><%= currency(tx.amount) %></td>
+      <td><span class="status-badge status-<%= tx.status %>"><%= tx.status %></span> <a href="/admin/transactions/<%= tx.id %>" class="btn btn-light btn-sm">Edit</a></td></tr>
+    <% }) %></tbody></table></div>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-cards" style="display:none;">
+  <div class="card"><div class="card-header"><h3 class="card-title">💳 Cards</h3></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>Type</th><th>Last 4</th><th>Limit</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody><% (cards||[]).forEach(c => { %>
+      <tr><td><strong><%= c.card_type %></strong></td>
+      <td style="font-family:monospace;">•••• <%= (c.card_number||'0000').slice(-4) %></td>
+      <td><%= currency(c.credit_limit || 0) %></td>
+      <td><span class="status-badge status-<%= c.status %>"><%= c.status %></span></td>
+      <td>
+        <form method="POST" action="/admin/approvals/cards/<%= c.id %>" style="display:inline;" onsubmit="return confirm('Approve this card?');">
+          <button class="btn btn-success btn-sm" <%= c.status!=='pending'?'disabled':'' %>>Approve</button>
+        </form>
+      </td></tr>
+    <% }) %></tbody></table></div>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-loans" style="display:none;">
+  <div class="card"><div class="card-header"><h3 class="card-title">🏦 Loans</h3></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>Type</th><th>Principal</th><th>Remaining</th><th>Term</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody><% (loans||[]).forEach(l => { %>
+      <tr><td><strong><%= l.loan_type %></strong></td>
+      <td><%= currency(l.principal_amount) %></td>
+      <td style="color:var(--danger);"><%= currency(parseFloat(l.total_amount)-parseFloat(l.amount_paid)) %></td>
+      <td><%= l.term_months %> mo</td>
+      <td><span class="status-badge status-<%= l.status %>"><%= l.status %></span></td>
+      <td>
+        <form method="POST" action="/admin/approvals/loans/<%= l.id %>" style="display:inline;" onsubmit="return confirm('Approve this loan?');">
+          <button class="btn btn-success btn-sm" <%= l.status!=='pending'?'disabled':'' %>>Approve</button>
+        </form>
+      </td></tr>
+    <% }) %></tbody></table></div>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-kyc" style="display:none;">
+  <div class="card"><div class="card-header"><h3 class="card-title">🆔 KYC Records</h3></div>
+    <div class="table-wrap"><table class="table"><thead><tr><th>Type</th><th>Number</th><th>Expiry</th><th>Submitted</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody><% (kyc||[]).forEach(k => { %>
+      <tr><td><strong><%= k.document_type %></strong></td>
+      <td style="font-family:monospace;"><%= k.document_number %></td>
+      <td><%= moment(k.expiry_date).format('DD MMM YYYY') %></td>
+      <td><%= moment(k.created_at).format('DD MMM YYYY') %></td>
+      <td><span class="status-badge status-<%= k.status %>"><%= k.status %></span></td>
+      <td>
+        <% if (k.status === 'pending') { %>
+          <form method="POST" action="/admin/approvals/kyc/<%= k.id %>" style="display:inline;" onsubmit="return confirm('Approve KYC?');">
+            <button class="btn btn-success btn-sm">Approve</button>
+          </form>
+          <form method="POST" action="/admin/approvals/kyc/<%= k.id %>/reject" style="display:inline;" onsubmit="return confirm('Reject KYC?');">
+            <button class="btn btn-danger btn-sm">Reject</button>
+          </form>
+        <% } else { %>
+          <a href="/kyc/<%= k.id %>" class="btn btn-light btn-sm">View</a>
+        <% } %>
+      </td></tr>
+    <% }) %></tbody></table></div>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-notif" style="display:none;">
+  <div class="card"><div class="card-header"><h3 class="card-title">🔔 Notifications</h3></div>
+    <div class="card-body" style="padding:0;">
+      <% (notifications||[]).forEach(n => { %>
+        <div style="padding:14px 24px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start;background:<%= n.is_read?'transparent':'var(--primary-alpha)' %>;">
+          <span class="status-badge status-<%= n.type==='error'?'rejected':n.type==='warning'?'pending':n.type==='success'?'approved':'active' %>" style="padding:6px 10px;">
+            <%= n.type==='error'?'❌':n.type==='warning'?'⚠️':n.type==='success'?'✅':'ℹ️' %>
+          </span>
+          <div style="flex:1;"><div style="font-weight:600;font-size:0.92rem;"><%= n.title %></div>
+          <div style="font-size:0.85rem;color:var(--text-gray);margin-top:2px;"><%= n.message %></div></div>
+          <div style="font-size:0.78rem;color:var(--text-light);"><%= moment(n.created_at).format('DD MMM HH:mm') %></div>
+        </div>
+      <% }) %>
+      <% if ((notifications||[]).length===0) { %><div class="empty-state" style="padding:40px;">No notifications</div><% } %>
+    </div>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-audit" style="display:none;">
+  <div class="card"><div class="card-header"><h3 class="card-title">📜 Activity / Admin Audit Log</h3></div>
+    <div class="card-body" style="padding:0;">
+      <% (auditLogs||[]).forEach(a => { %>
+        <div style="padding:14px 24px;border-bottom:1px solid var(--border);display:flex;gap:12px;">
+          <div style="width:34px;height:34px;border-radius:50%;background:var(--primary-alpha);color:var(--primary);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.8rem;flex-shrink:0;">
+            <%= a.action.charAt(0).toUpperCase() %>
+          </div>
+          <div style="flex:1;">
+            <div style="font-weight:600;font-size:0.9rem;"><%= a.action.replace(/_/g,' ') %> → <%= a.target_type %> #<%= a.target_id %></div>
+            <div style="font-size:0.82rem;color:var(--text-gray);margin-top:2px;"><%= a.details || '' %></div>
+            <div style="font-size:0.75rem;color:var(--text-light);margin-top:3px;">
+              Admin <%= a.admin_id ? '#' + a.admin_id : 'System' %> • <%= moment(a.created_at).format('DD MMM YYYY HH:mm') %> • IP <%= a.ip_address || '—' %>
+            </div>
+          </div>
+        </div>
+      <% }) %>
+      <% if ((auditLogs||[]).length===0) { %><div class="empty-state" style="padding:40px;">No audit logs yet</div><% } %>
+    </div>
+  </div>
+</div>
+
+<!-- Edit User Modal -->
+<div class="modal" id="editUserModal"><div class="modal-dialog" style="max-width:640px;">
+  <div class="modal-header"><h3 class="modal-title">✏️ Edit Customer Details</h3>
+  <button class="modal-close" onclick="document.getElementById('editUserModal').classList.remove('active')">✕</button></div>
+  <form method="POST" action="/admin/users/<%= customer.id %>/update">
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">First Name</label><input type="text" name="first_name" value="<%= customer.first_name %>" class="form-input"></div>
+        <div class="form-group"><label class="form-label">Last Name</label><input type="text" name="last_name" value="<%= customer.last_name %>" class="form-input"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Email</label><input type="email" name="email" value="<%= customer.email %>" class="form-input"></div>
+        <div class="form-group"><label class="form-label">Phone</label><input type="tel" name="phone" value="<%= customer.phone %>" class="form-input"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">DOB</label><input type="date" name="date_of_birth" value="<%= customer.date_of_birth || '' %>" class="form-input"></div>
+        <div class="form-group"><label class="form-label">Country</label><input type="text" name="country" value="<%= customer.country || 'Australia' %>" class="form-input"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Address</label><input type="text" name="address" value="<%= customer.address || '' %>" class="form-input"></div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">City</label><input type="text" name="city" value="<%= customer.city || '' %>" class="form-input"></div>
+        <div class="form-group"><label class="form-label">State</label>
+          <select name="state" class="form-select">
+            <option value="" <%= !customer.state ? 'selected' : '' %>></option>
+            <option value="NSW" <%= customer.state === 'NSW' ? 'selected' : '' %>>NSW</option>
+            <option value="VIC" <%= customer.state === 'VIC' ? 'selected' : '' %>>VIC</option>
+            <option value="QLD" <%= customer.state === 'QLD' ? 'selected' : '' %>>QLD</option>
+            <option value="SA" <%= customer.state === 'SA' ? 'selected' : '' %>>SA</option>
+            <option value="WA" <%= customer.state === 'WA' ? 'selected' : '' %>>WA</option>
+            <option value="TAS" <%= customer.state === 'TAS' ? 'selected' : '' %>>TAS</option>
+            <option value="NT" <%= customer.state === 'NT' ? 'selected' : '' %>>NT</option>
+            <option value="ACT" <%= customer.state === 'ACT' ? 'selected' : '' %>>ACT</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Postcode</label><input type="text" name="postcode" value="<%= customer.postcode || '' %>" class="form-input" maxlength="4"></div>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap;">
+        <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="is_verified" class="form-checkbox" <%= customer.is_verified?'checked':'' %>><span>Verified</span></label>
+        <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="is_frozen" class="form-checkbox" <%= customer.is_frozen?'checked':'' %>><span>Frozen</span></label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-light" onclick="document.getElementById('editUserModal').classList.remove('active')">Cancel</button>
+      <button type="submit" class="btn btn-primary">💾 Save Changes</button>
+    </div>
+  </form>
+</div></div>
+
+<!-- PW Modal -->
+<div class="modal" id="pwModal"><div class="modal-dialog" style="max-width:440px;">
+  <div class="modal-header"><h3 class="modal-title">🔐 Reset Password</h3>
+  <button class="modal-close" onclick="document.getElementById('pwModal').classList.remove('active')">✕</button></div>
+  <form method="POST" action="/admin/users/<%= customer.id %>/reset-password">
+    <div class="modal-body">
+      <div class="alert alert-warning"><span class="alert-icon">⚠️</span>
+        <div class="alert-content"><div class="alert-title">Admin Password Reset</div>
+          <p class="alert-message" style="margin:0;">User will be forced to change password on next login.</p></div></div>
+      <div class="form-group"><label class="form-label">New Temporary Password</label>
+        <input type="text" name="password" required minlength="8" value="UCBReset@<%= moment().format('YYYY') %>" class="form-input"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-light" onclick="document.getElementById('pwModal').classList.remove('active')">Cancel</button>
+      <button type="submit" class="btn btn-primary">🔐 Reset Password</button>
+    </div>
+  </form>
+</div></div>
+
+<!-- Open Account Modal -->
+<div class="modal" id="openAccModal"><div class="modal-dialog" style="max-width:520px;">
+  <div class="modal-header"><h3 class="modal-title">🏦 Open Account for Customer</h3>
+  <button class="modal-close" onclick="document.getElementById('openAccModal').classList.remove('active')">✕</button></div>
+  <form method="POST" action="/admin/users/<%= customer.id %>/account">
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Account Type</label>
+        <select name="account_type" class="form-select">
+          <option>Everyday Savings Account</option>
+          <option>High Interest Account</option>
+          <option>Term Deposit Account</option>
+          <option>Business Account</option>
+          <option>Multi-Currency Account</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Initial Deposit</label>
+        <input type="number" name="initial_balance" step="0.01" value="0" class="form-input"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-light" onclick="document.getElementById('openAccModal').classList.remove('active')">Cancel</button>
+      <button type="submit" class="btn btn-primary">✅ Open Account</button>
+    </div>
+  </form>
+</div></div>
+
+<!-- Balance Adjustment Modal -->
+<div class="modal" id="balAdjModal"><div class="modal-dialog" style="max-width:520px;">
+  <div class="modal-header"><h3 class="modal-title">💰 Manual Balance Adjustment</h3>
+  <button class="modal-close" onclick="document.getElementById('balAdjModal').classList.remove('active')">✕</button></div>
+  <form method="POST" action="/admin/accounts/adjust">
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Select Account *</label>
+        <select name="account_id" required class="form-select">
+          <% (accounts||[]).forEach(a => { %>
+            <option value="<%= a.id %>"><%= a.account_type %> • <%= currency(a.balance) %></option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Adjustment Type</label>
+        <select name="type" class="form-select">
+          <option value="credit">➕ Credit (add funds)</option>
+          <option value="debit">➖ Debit (remove funds)</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Amount *</label>
+        <input type="number" name="amount" required min="0.01" step="0.01" class="form-input"></div>
+      <div class="form-group"><label class="form-label">Reason / Notes</label>
+        <input type="text" name="notes" class="form-input" placeholder="Reason for manual adjustment"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-light" onclick="document.getElementById('balAdjModal').classList.remove('active')">Cancel</button>
+      <button type="submit" class="btn btn-primary">✅ Apply Adjustment</button>
+    </div>
+  </form>
+</div></div>
+
+<style>
+.mini-stat{padding:14px;background:var(--bg-gray);border-radius:var(--radius);}
+.mini-stat-label{font-size:0.72rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;}
+.mini-stat-value{font-weight:800;font-size:1.35rem;margin-top:4px;}
+.tab-btn.active{background:var(--primary);color:white;border-color:var(--primary);}
+</style>
+
+<script>
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active','btn-primary'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.add('btn-light'));
+    btn.classList.add('active','btn-primary');
+    btn.classList.remove('btn-light');
+    document.querySelectorAll('.tab-content').forEach(c => c.style.display='none');
+    document.getElementById('tab-' + btn.dataset.tab).style.display = 'block';
+  });
+});
+</script>
+
+<%- include('../partials/layouts/admin-end') -%>
+
+

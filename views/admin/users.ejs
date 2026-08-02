@@ -1,0 +1,100 @@
+<%- include('../partials/layouts/admin-start') -%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+  <div>
+    <h2 style="margin:0;">👥 Manage Customers</h2>
+    <p style="margin:4px 0 0;color:var(--text-gray);">Full customer CRUD — view, edit, freeze, delete, and reset passwords.</p>
+  </div>
+  <a href="/admin/users/create" class="btn btn-primary btn-lg">➕ Create New User</a>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+  <div class="filter-bar">
+    <div class="filter-group">
+      <span class="filter-label">Search</span>
+      <input type="text" class="form-input" id="searchUser" placeholder="Name, email, phone...">
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Status</span>
+      <select class="form-select" id="statusFilter">
+        <option value="">All</option>
+        <option value="active">Active</option>
+        <option value="frozen">Frozen</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Verification</span>
+      <select class="form-select" id="verifyFilter">
+        <option value="">All</option>
+        <option value="verified">Verified</option>
+        <option value="unverified">Unverified</option>
+      </select>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="applyUserFilter()">🔍 Search</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Contact</th>
+          <th>Accounts</th>
+          <th>Status</th>
+          <th>Joined</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% users.forEach(u => { %>
+          <tr class="user-row" data-status="<%= u.is_frozen ? 'frozen' : 'active' %>" data-verified="<%= u.is_verified ? 'verified' : 'unverified' %>" data-name="<%= (u.first_name + ' ' + u.last_name + ' ' + u.email + ' ' + u.phone).toLowerCase() %>">
+            <td style="cursor:pointer;" onclick="location.href='/admin/users/<%= u.id %>'">
+              <div style="display:flex;gap:10px;align-items:center;">
+                <div class="user-avatar" style="width:36px;height:36px;font-size:0.8rem;"><%= (u.first_name||'?').charAt(0)+(u.last_name||'').charAt(0) %></div>
+                <div>
+                  <div style="font-weight:600;font-size:0.9rem;"><%= u.first_name %> <%= u.last_name %></div>
+                  <div style="font-size:0.75rem;color:var(--text-light);">ID: UCB-<%= String(u.id).padStart(6, '0') %></div>
+                </div>
+              </div>
+            </td>
+            <td>
+              <div style="font-size:0.85rem;">📧 <%= u.email %></div>
+              <div style="font-size:0.8rem;color:var(--text-light);">📱 <%= u.phone %></div>
+            </td>
+            <td style="text-align:center;font-weight:600;">
+              <% const uacc = (userAccounts || {})[u.id] || []; %>
+              <%= uacc.length %> acc
+              <div style="font-size:0.75rem;color:var(--text-light);font-weight:500;">
+                Tot <%= currency(uacc.reduce((s,a)=>s+parseFloat(a.balance||0),0)) %>
+              </div>
+            </td>
+            <td>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                <% if (u.is_frozen) { %><span class="status-badge status-frozen">Frozen</span>
+                <% } else { %><span class="status-badge status-active">Active</span><% } %>
+                <% if (u.is_verified) { %><span class="status-badge status-completed">✓ KYC</span>
+                <% } else { %><span class="status-badge status-pending">KYC ⏳</span><% } %>
+                <% if (u.is_admin) { %><span class="status-badge status-rejected">ADMIN</span><% } %>
+              </div>
+            </td>
+            <td style="font-size:0.85rem;"><%= moment(u.created_at).format('DD MMM YYYY') %></td>
+            <td onclick="event.stopPropagation();">
+              <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                <a href="/admin/users/<%= u.id %>" class="btn btn-light btn-sm">View</a>
+                <% if (!u.is_admin) { %>
+                  <a href="/admin/users/<%= u.id %>/freeze" class="btn btn-warning btn-sm"><%= u.is_frozen ? '🔥 Unfreeze' : '❄️ Freeze' %></a>
+                <% } %>
+              </div>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/layouts/admin-end') -%>
+
+

@@ -1,0 +1,143 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/transfers/history" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← Back to History</a>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">💳 Transaction Details #<%= String(tx.id).padStart(6, '0') %></h3></div>
+    <div class="card-body">
+      <% const isOut = ['withdrawal','local_transfer','international_transfer','bill_payment','loan_payment'].includes(tx.transaction_type); %>
+      <div style="text-align:center;padding:20px 0;">
+        <div style="width:80px;height:80px;border-radius:50%;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;font-size:2.2rem;
+          background:<%= tx.status === 'completed' ? 'var(--success-light)' : tx.status === 'rejected' ? 'var(--danger-light)' : 'var(--warning-light)' %>;">
+          <%= tx.status === 'completed' ? '✅' : tx.status === 'rejected' ? '❌' : tx.status === 'pending' ? '⏳' : '✓' %>
+        </div>
+        <div style="font-size:2.5rem;font-weight:800;color:<%= isOut ? 'var(--danger)' : 'var(--success)' %>;margin-bottom:8px;">
+          <%= isOut ? '-' : '+' %><%= currency(Math.abs(parseFloat(tx.amount))) %>
+        </div>
+        <div style="margin-bottom:8px;">
+          <span class="status-badge status-<%= tx.status %>"><%= tx.status.toUpperCase() %></span>
+        </div>
+        <div style="color:var(--text-light);font-size:0.9rem;"><%= moment(tx.created_at).format('dddd, DD MMMM YYYY at HH:mm AEST') %></div>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:8px 0 20px;">
+
+      <div style="display:grid;gap:12px;">
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-gray);">Transaction Type</span>
+          <strong style="text-transform:capitalize;"><%= tx.transaction_type.replace(/_/g, ' ') %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-gray);">Description</span>
+          <strong><%= tx.recipient_name || tx.description || '—' %></strong>
+        </div>
+        <% if (tx.to_account) { %>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-gray);">Recipient Account</span>
+          <strong style="font-family:monospace;"><%= tx.to_bsb ? 'BSB ' + tx.to_bsb + ' • ' : '' %><%= tx.to_account %></strong>
+        </div>
+        <% } %>
+        <% if (tx.country) { %>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-gray);">Destination</span>
+          <strong>📍 <%= tx.country %></strong>
+        </div>
+        <% } %>
+        <% if (tx.foreign_currency) { %>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-gray);">Foreign Amount</span>
+          <strong><%= tx.foreign_amount %> <%= tx.foreign_currency %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-gray);">Exchange Rate</span>
+          <strong>1 AUD = <%= tx.exchange_rate %> <%= tx.foreign_currency %></strong>
+        </div>
+        <% } %>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-gray);">Reference</span>
+          <strong style="font-family:monospace;"><%= tx.reference || '—' %></strong>
+        </div>
+        <% if (parseFloat(tx.fee) > 0) { %>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-gray);">Fee</span>
+          <strong style="color:var(--danger);"><%= currency(tx.fee) %></strong>
+        </div>
+        <% } %>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-top:2px solid var(--border);margin-top:8px;padding-top:16px;">
+          <span style="font-weight:700;font-size:1.05rem;">Total</span>
+          <strong style="color:var(--primary);font-size:1.2rem;"><%= currency(Math.abs(parseFloat(tx.amount)) + parseFloat(tx.fee || 0)) %></strong>
+        </div>
+        <% if (tx.status === 'pending') { %>
+          <div style="padding-top:16px;">
+            <form method="POST" action="/transfers/<%= tx.id %>/cancel" onsubmit="return confirm('Cancel this pending transfer?');">
+              <button class="btn btn-danger btn-block btn-lg">❌ Cancel Transfer</button>
+            </form>
+          </div>
+        <% } %>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">📊 Timeline</h3></div>
+      <div class="card-body">
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="timeline-time"><%= moment(tx.created_at).format('DD MMM, HH:mm') %></div>
+            <div class="timeline-title">Transfer Created</div>
+            <div class="timeline-desc">Transfer initiated by <%= tx.from_account ? 'you' : 'system' %>.</div>
+          </div>
+          <% if (tx.status === 'pending' || tx.status === 'approved' || tx.status === 'completed' || tx.status === 'rejected') { %>
+          <div class="timeline-item">
+            <div class="timeline-time">
+              <%= tx.approved_at ? moment(tx.approved_at).format('DD MMM, HH:mm') : 'Awaiting review' %>
+            </div>
+            <div class="timeline-title">
+              <%= tx.status === 'pending' ? '⏳ Under Review' : tx.status === 'rejected' ? '❌ Rejected' : '✅ Admin Approved' %>
+            </div>
+            <div class="timeline-desc">
+              <% if (tx.status === 'pending') { %>
+                Our security team is reviewing this transfer for your protection.
+              <% } else if (tx.status === 'rejected') { %>
+                Transfer was rejected. Contact support for more info.
+              <% } else { %>
+                Transfer has been approved for processing.
+              <% } %>
+            </div>
+          </div>
+          <% } %>
+          <% if (tx.status === 'completed') { %>
+          <div class="timeline-item" style="border:none;">
+            <div class="timeline-time"><%= moment(tx.completed_at || tx.created_at).format('DD MMM, HH:mm') %></div>
+            <div class="timeline-title">✅ Completed</div>
+            <div class="timeline-desc">Funds have been sent successfully.</div>
+          </div>
+          <% } %>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">💡 Need Help?</h3></div>
+      <div class="card-body">
+        <div class="alert alert-info" style="margin-bottom:12px;">
+          <span class="alert-icon">💬</span>
+          <div class="alert-content">
+            <div class="alert-title">Questions about this transaction?</div>
+            <p class="alert-message" style="margin:0;">Our team can help with payment tracking and investigations.</p>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <a href="/user/support" class="btn btn-outline btn-block">💬 Live Chat / Support</a>
+          <a href="/transfers/local" class="btn btn-primary btn-block">↔️ Make Another Transfer</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/layouts/user-end') -%>
+
+

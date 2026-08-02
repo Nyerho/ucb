@@ -1,0 +1,22 @@
+module.exports = [
+  { code: 'AUD', name: 'Australian Dollar', symbol: '$', rate: 1.00 },
+  { code: 'USD', name: 'US Dollar', symbol: '$', rate: 0.66 },
+  { code: 'GBP', name: 'British Pound', symbol: '£', rate: 0.52 },
+  { code: 'EUR', name: 'Euro', symbol: '€', rate: 0.60 },
+  { code: 'NZD', name: 'New Zealand Dollar', symbol: '$', rate: 1.10 },
+  { code: 'JPY', name: 'Japanese Yen', symbol: '¥', rate: 99.50 },
+  { code: 'SGD', name: 'Singapore Dollar', symbol: '$', rate: 0.88 },
+  { code: 'HKD', name: 'Hong Kong Dollar', symbol: '$', rate: 5.15 },
+  { code: 'CAD', name: 'Canadian Dollar', symbol: '$', rate: 0.89 },
+  { code: 'INR', name: 'Indian Rupee', symbol: '₹', rate: 54.80 },
+  { code: 'CNY', name: 'Chinese Yuan', symbol: '¥', rate: 4.75 },
+  { code: 'CHF', name: 'Swiss Franc', symbol: 'Fr', rate: 0.59 },
+  { code: 'SEK', name: 'Swedish Krona', symbol: 'kr', rate: 6.95 },
+  { code: 'KRW', name: 'South Korean Won', symbol: '₩', rate: 876.50 },
+  { code: 'THB', name: 'Thai Baht', symbol: '฿', rate: 23.45 },
+  { code: 'MYR', name: 'Malaysian Ringgit', symbol: 'RM', rate: 3.08 },
+  { code: 'PHP', name: 'Philippine Peso', symbol: '₱', rate: 37.25 },
+  { code: 'IDR', name: 'Indonesian Rupiah', symbol: 'Rp', rate: 10280.00 },
+  { code: 'VND', name: 'Vietnamese Dong', symbol: '₫', rate: 16180.00 },
+  { code: 'ZAR', name: 'South African Rand', symbol: 'R', rate: 11.45 }
+];

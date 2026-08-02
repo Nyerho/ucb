@@ -1,0 +1,77 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+  <div>
+    <h2 style="margin:0;">🏦 My Accounts</h2>
+    <p style="margin:4px 0 0;color:var(--text-gray);">All your United Credit Bank accounts in one place.</p>
+  </div>
+  <a href="/accounts/open/new" class="btn btn-primary btn-lg">➕ Open New Account</a>
+</div>
+
+<div class="grid-2" style="margin-bottom:20px;">
+  <% accounts.forEach(acc => { %>
+    <div class="account-card" onclick="location.href='/accounts/<%= acc.id %>'" style="cursor:pointer;">
+      <div class="account-card-header">
+        <div class="account-type">
+          <div class="account-type-icon">
+            <% if (acc.account_type.includes('High')) { %>🏆
+            <% } else if (acc.account_type.includes('Term')) { %>🔒
+            <% } else if (acc.account_type.includes('Business')) { %>🏢
+            <% } else if (acc.account_type.includes('Multi') || acc.account_type.includes('Intl')) { %>🌍
+            <% } else { %>💳<% } %>
+          </div>
+          <div>
+            <div class="account-name"><%= acc.account_type %></div>
+            <div class="account-number">BSB <%= acc.bsb %> • <%= acc.account_number %></div>
+          </div>
+        </div>
+        <div class="account-balance">
+          <div class="account-balance-label">Available</div>
+          <div class="account-balance-value"><%= currency(acc.available_balance) %></div>
+          <div style="font-size:0.8rem;color:var(--text-light);text-align:right;">Balance: <%= currency(acc.balance) %></div>
+        </div>
+      </div>
+      <div class="account-meta">
+        <div class="account-meta-item">
+          <span class="account-meta-label">Branch</span>
+          <span class="account-meta-value"><%= acc.branch %></span>
+        </div>
+        <div class="account-meta-item">
+          <span class="account-meta-label">Opened</span>
+          <span class="account-meta-value"><%= moment(acc.opened_date).format('DD MMM YYYY') %></span>
+        </div>
+        <div class="account-meta-item">
+          <span class="account-meta-label">Status</span>
+          <span class="status-badge status-<%= acc.status %>"><%= acc.status %></span>
+        </div>
+      </div>
+      <div class="account-actions" onclick="event.stopPropagation();">
+        <a href="/accounts/<%= acc.id %>" class="btn btn-light btn-sm">Details</a>
+        <a href="/transfers/local?from=<%= acc.id %>" class="btn btn-outline btn-sm">Transfer</a>
+        <a href="/user/statements?account=<%= acc.id %>" class="btn btn-light btn-sm">Statement</a>
+        <% if (parseFloat(acc.balance) === 0 && acc.status === 'active') { %>
+          <form method="POST" action="/accounts/<%= acc.id %>/close" style="display:inline;" onsubmit="return confirm('Close this account?');">
+            <button class="btn btn-danger btn-sm" type="submit">Close</button>
+          </form>
+        <% } %>
+      </div>
+    </div>
+  <% }) %>
+</div>
+
+<% if (accounts.length === 0) { %>
+  <div class="card">
+    <div class="card-body">
+      <div class="empty-state">
+        <div class="empty-state-icon">🏦</div>
+        <h4>No accounts yet</h4>
+        <p>Open your first account with United Credit Bank today — it takes less than 2 minutes.</p>
+        <a href="/accounts/open/new" class="btn btn-primary btn-lg" style="margin-top:16px;">🚀 Open Your First Account</a>
+      </div>
+    </div>
+  </div>
+<% } %>
+
+<%- include('../partials/layouts/user-end') -%>
+
+

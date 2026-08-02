@@ -1,0 +1,182 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/loans" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← All Loans</a>
+
+<% 
+  const progress = Math.min(100, parseFloat(loan.amount_paid) / parseFloat(loan.total_amount) * 100);
+  const remaining = parseFloat(loan.total_amount) - parseFloat(loan.amount_paid);
+%>
+
+<div class="grid-2">
+  <div class="card" style="margin-bottom:20px;">
+    <div class="card-header">
+      <h3 class="card-title">🏦 <%= loan.loan_type %> • #<%= String(loan.id).padStart(6, '0') %></h3>
+      <span class="status-badge status-<%= loan.status %>"><%= loan.status %></span>
+    </div>
+    <div class="card-body">
+      <div class="stat-cards" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:20px;">
+        <div style="padding:16px;background:var(--bg-gray);border-radius:var(--radius);">
+          <div style="font-size:0.72rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Remaining Balance</div>
+          <div style="font-weight:800;font-size:1.4rem;color:var(--danger);margin-top:4px;"><%= currency(remaining) %></div>
+        </div>
+        <div style="padding:16px;background:var(--bg-gray);border-radius:var(--radius);">
+          <div style="font-size:0.72rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Monthly Payment</div>
+          <div style="font-weight:800;font-size:1.4rem;color:var(--primary);margin-top:4px;"><%= currency(loan.monthly_payment) %></div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;font-size:0.88rem;margin-bottom:6px;">
+          <span style="color:var(--text-gray);">Repayment Progress</span>
+          <strong><%= progress.toFixed(1) %>%</strong>
+        </div>
+        <div class="progress" style="height:14px;">
+          <div class="progress-bar" style="width:<%= progress %>%;height:14px;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--text-light);margin-top:6px;">
+          <span>Paid: <%= currency(loan.amount_paid) %></span>
+          <span>Total: <%= currency(loan.total_amount) %></span>
+        </div>
+      </div>
+
+      <div style="display:grid;gap:10px;">
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Principal Borrowed</span>
+          <strong><%= currency(loan.principal_amount) %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Interest Rate</span>
+          <strong style="color:var(--primary);"><%= parseFloat(loan.interest_rate).toFixed(2) %>% p.a.</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Loan Term</span>
+          <strong><%= loan.term_months %> months (<%= (loan.term_months/12).toFixed(1) %> yr)</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Start Date</span>
+          <strong><%= moment(loan.approved_at || loan.created_at).format('DD MMM YYYY') %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-gray);">Maturity Date</span>
+          <strong><%= moment(loan.approved_at || loan.created_at).add(loan.term_months, 'months').format('DD MMM YYYY') %></strong>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <% if (loan.status === 'active') { %>
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">💳 Make a Payment</h3></div>
+      <div class="card-body">
+        <form method="POST" action="/loans/<%= loan.id %>/pay">
+          <div class="form-group">
+            <label class="form-label">From Account *</label>
+            <select name="account_id" required class="form-select">
+              <% accounts.forEach(acc => { %>
+                <option value="<%= acc.id %>">
+                  <%= acc.account_type %> • Available: <%= currency(acc.available_balance) %>
+                </option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Payment Amount (AUD) *</label>
+            <div style="position:relative;">
+              <span style="position:absolute;left:16px;top:50%;transform:translateY(-50%);font-weight:600;color:var(--text-gray);">$</span>
+              <input type="number" name="amount" required min="1" step="0.01" value="<%= loan.monthly_payment %>" class="form-input" style="padding-left:32px;">
+            </div>
+            <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-light btn-sm" onclick="this.form.amount.value=<%= loan.monthly_payment %>">Monthly</button>
+              <button type="button" class="btn btn-light btn-sm" onclick="this.form.amount.value=<%= (loan.monthly_payment*2).toFixed(2) %>">2x</button>
+              <button type="button" class="btn btn-light btn-sm" onclick="this.form.amount.value=<%= remaining.toFixed(2) %>">Pay Off</button>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-lg btn-block">✅ Submit Payment</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">💡 Payment Tips</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;gap:10px;">
+          <span style="font-size:1.2rem;">💡</span>
+          <div>
+            <div style="font-weight:700;font-size:0.9rem;">Pay extra & save</div>
+            <div style="font-size:0.82rem;color:var(--text-light);">Extra payments reduce interest and pay off your loan faster</div>
+          </div>
+        </div>
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;gap:10px;">
+          <span style="font-size:1.2rem;">📅</span>
+          <div>
+            <div style="font-weight:700;font-size:0.9rem;">Direct debit set up</div>
+            <div style="font-size:0.82rem;color:var(--text-light);">Automatic payments ensure you never miss a due date</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <% } else { %>
+    <div class="card">
+      <div class="card-body">
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="timeline-time"><%= moment(loan.created_at).format('DD MMM, HH:mm') %></div>
+            <div class="timeline-title">📝 Application Submitted</div>
+            <div class="timeline-desc">Applied for <%= currency(loan.principal_amount) %> over <%= loan.term_months %> months.</div>
+          </div>
+          <% if (loan.status !== 'pending') { %>
+          <div class="timeline-item">
+            <div class="timeline-time"><%= loan.approved_at ? moment(loan.approved_at).format('DD MMM, HH:mm') : 'Pending' %></div>
+            <div class="timeline-title">
+              <%= loan.status === 'rejected' ? '❌ Application Rejected' : loan.status === 'active' ? '✅ Loan Approved' : '⏳ Under Review' %>
+            </div>
+            <div class="timeline-desc">
+              <%= loan.notes || 'Application is being assessed by our lending team.' %>
+            </div>
+          </div>
+          <% } %>
+        </div>
+      </div>
+    </div>
+  <% } %>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">📋 Payment History</h3>
+    <span style="font-size:0.85rem;color:var(--text-light);"><%= payments.length %> payment(s)</span>
+  </div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Reference</th>
+          <th style="text-align:right;">Amount</th>
+          <th>Method</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (payments.length === 0) { %>
+          <tr><td colspan="5"><div class="empty-state" style="padding:40px 20px;"><div class="empty-state-icon">💳</div><h4>No payments yet</h4><p>Your first payment will appear here once processed.</p></div></td></tr>
+        <% } %>
+        <% payments.forEach(p => { %>
+          <tr>
+            <td><%= moment(p.paid_at || p.created_at).format('DD MMM YYYY') %></td>
+            <td style="font-family:monospace;font-size:0.85rem;"><%= p.reference || 'PYMT-' + String(p.id).padStart(6, '0') %></td>
+            <td style="text-align:right;font-weight:700;color:var(--danger);">-<%= currency(p.amount) %></td>
+            <td><%= p.payment_method ? String(p.payment_method).replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'Direct Debit' %></td>
+            <td><span class="status-badge status-<%= p.status %>"><%= p.status %></span></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/layouts/user-end') -%>
+
+

@@ -1,0 +1,50 @@
+<%- include('../partials/layouts/admin-start') -%>
+
+<h2 style="margin-bottom:16px;">💳 Manage Cards (200)</h2>
+
+<div class="card">
+  <div class="filter-bar">
+    <div class="filter-group"><span class="filter-label">Search</span><input type="text" class="form-input" placeholder="Cardholder, last 4 digits..."></div>
+    <div class="filter-group"><span class="filter-label">Type</span>
+      <select class="form-select"><option value="">All</option><option>Debit</option><option>Credit</option></select>
+    </div>
+    <div class="filter-group"><span class="filter-label">Status</span>
+      <select class="form-select">
+        <option value="">All</option><option>pending</option><option>active</option><option>frozen</option><option>blocked</option><option>rejected</option>
+      </select>
+    </div>
+    <button class="btn btn-primary btn-sm">🔍 Filter</button>
+  </div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Cardholder</th><th>Card Type</th><th>Last 4</th><th style="text-align:right;">Limit</th><th>Expiry</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>
+        <% cards.forEach(c => { %>
+          <tr>
+            <td><div style="display:flex;gap:8px;align-items:center;">
+              <div class="user-avatar" style="width:32px;height:32px;font-size:0.75rem;"><%= (c.cardholder_name||c.user_name||'?').charAt(0) %></div>
+              <div><div style="font-weight:600;font-size:0.88rem;"><%= c.user_name || c.cardholder_name || 'User #' + c.user_id %></div>
+                <div style="font-size:0.72rem;color:var(--text-light);"><%= c.cardholder_name %></div></div></div></td>
+            <td><strong style="font-size:0.85rem;"><%= c.card_type %></strong></td>
+            <td style="font-family:monospace;">•••• <%= (c.card_number||'0000').slice(-4) %></td>
+            <td style="text-align:right;font-weight:700;"><%= currency(c.credit_limit || 0) %></td>
+            <td><%= c.expiry_date || 'MM/YY' %></td>
+            <td><span class="status-badge status-<%= c.status %>"><%= c.status %></span></td>
+            <td>
+              <% if (c.status === 'pending') { %>
+                <form method="POST" action="/admin/approvals/cards/<%= c.id %>" style="display:inline;" onsubmit="return confirm('Approve card?');">
+                  <button class="btn btn-success btn-sm">✓</button>
+                </form>
+              <% } %>
+              <a href="/cards/<%= c.id %>" target="_blank" class="btn btn-light btn-sm">View</a>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/layouts/admin-end') -%>
+
+

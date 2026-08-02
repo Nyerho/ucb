@@ -1,0 +1,82 @@
+<%- include('../partials/layouts/admin-start') -%>
+
+<div class="d-flex align-center justify-between flex-wrap gap-3" style="margin-bottom:16px;">
+  <h2 style="margin-bottom:0;">💸 All Transactions (500 latest)</h2>
+  <a href="/admin/transactions/new" class="btn btn-primary">➕ Add Transaction</a>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+  <div class="stat-cards" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+    <div style="padding:14px;background:var(--primary-alpha);border-radius:var(--radius);">
+      <div style="font-size:0.72rem;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.05em;">Total Volume</div>
+      <div style="font-size:1.5rem;font-weight:900;color:var(--primary);margin-top:4px;"><%= currency(totals.volume) %></div>
+    </div>
+    <div style="padding:14px;background:var(--success-light);border-radius:var(--radius);">
+      <div style="font-size:0.72rem;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.05em;">Completed</div>
+      <div style="font-size:1.5rem;font-weight:900;color:var(--success);margin-top:4px;"><%= totals.completed %></div>
+    </div>
+    <div style="padding:14px;background:var(--warning-light);border-radius:var(--radius);">
+      <div style="font-size:0.72rem;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.05em;">Pending</div>
+      <div style="font-size:1.5rem;font-weight:900;color:var(--warning);margin-top:4px;"><%= totals.pending %></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <form class="filter-bar" method="GET" action="/admin/transactions">
+    <div class="filter-group"><span class="filter-label">Search</span><input type="text" class="form-input" id="txSearch" name="search" value="<%= filters.search || '' %>" placeholder="Name, ref, amount..."></div>
+    <div class="filter-group"><span class="filter-label">Type</span>
+      <select class="form-select" name="type">
+        <option value="">All</option><option value="local_transfer" <%= filters.type === 'local_transfer' ? 'selected' : '' %>>local_transfer</option><option value="international_transfer" <%= filters.type === 'international_transfer' ? 'selected' : '' %>>international_transfer</option>
+        <option value="deposit" <%= filters.type === 'deposit' ? 'selected' : '' %>>deposit</option><option value="withdrawal" <%= filters.type === 'withdrawal' ? 'selected' : '' %>>withdrawal</option><option value="bill_payment" <%= filters.type === 'bill_payment' ? 'selected' : '' %>>bill_payment</option>
+        <option value="loan_payment" <%= filters.type === 'loan_payment' ? 'selected' : '' %>>loan_payment</option><option value="loan_disbursement" <%= filters.type === 'loan_disbursement' ? 'selected' : '' %>>loan_disbursement</option><option value="admin_adjustment" <%= filters.type === 'admin_adjustment' ? 'selected' : '' %>>admin_adjustment</option>
+      </select>
+    </div>
+    <div class="filter-group"><span class="filter-label">Status</span>
+      <select class="form-select" name="status"><option value="">All</option><option value="pending" <%= filters.status === 'pending' ? 'selected' : '' %>>pending</option><option value="completed" <%= filters.status === 'completed' ? 'selected' : '' %>>completed</option><option value="rejected" <%= filters.status === 'rejected' ? 'selected' : '' %>>rejected</option><option value="cancelled" <%= filters.status === 'cancelled' ? 'selected' : '' %>>cancelled</option></select>
+    </div>
+    <div class="filter-group"><span class="filter-label">From</span><input type="date" class="form-input" name="from_date" value="<%= filters.from_date || '' %>"></div>
+    <div class="filter-group"><span class="filter-label">To</span><input type="date" class="form-input" name="to_date" value="<%= filters.to_date || '' %>"></div>
+    <div class="filter-group"><span class="filter-label">Min $</span><input type="number" class="form-input" style="max-width:100px;" name="min_amount" value="<%= filters.min_amount || '' %>"></div>
+    <div class="filter-group"><span class="filter-label">Max $</span><input type="number" class="form-input" style="max-width:100px;" name="max_amount" value="<%= filters.max_amount || '' %>"></div>
+    <button class="btn btn-primary btn-sm">🔍 Filter</button>
+  </form>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>ID & Date</th><th>Customer</th><th>Type & Description</th><th>Reference</th><th style="text-align:right;">Amount</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>
+        <% transactions.forEach(tx => { %>
+          <tr>
+            <td><div style="font-family:monospace;font-weight:700;font-size:0.85rem;">TX-<%= String(tx.id).padStart(6,'0') %></div>
+              <div style="font-size:0.72rem;color:var(--text-light);"><%= moment(tx.created_at).format('DD MMM YYYY HH:mm') %></div></td>
+            <td><div style="font-weight:600;font-size:0.88rem;"><%= tx.user_name || 'User #' + tx.user_id %></div>
+              <div style="font-size:0.72rem;color:var(--text-light);">UID: <%= tx.user_id %></div></td>
+            <td><div style="font-size:0.75rem;color:var(--text-light);"><%= tx.transaction_type.replace(/_/g,' ') %></div>
+              <div style="font-weight:600;font-size:0.88rem;"><%= (tx.recipient_name || tx.description || '—').slice(0,35) %></div></td>
+            <td style="font-family:monospace;font-size:0.8rem;"><%= tx.reference || '—' %></td>
+            <td style="text-align:right;">
+              <div style="font-weight:800;color:<%= parseFloat(tx.amount)<0?'var(--danger)':'var(--success)' %>;"><%= currency(tx.amount) %></div>
+              <% if (parseFloat(tx.fee)>0) { %><div style="font-size:0.7rem;color:var(--text-light);">Fee <%= currency(tx.fee) %></div><% } %>
+            </td>
+            <td><span class="status-badge status-<%= tx.status %>"><%= tx.status %></span></td>
+            <td style="white-space:nowrap;">
+              <a href="/admin/transactions/<%= tx.id %>" class="btn btn-light btn-sm">Edit</a>
+              <% if (tx.status === 'pending') { %>
+                <form method="POST" action="/admin/approvals/transfers/<%= tx.id %>" style="display:inline;">
+                  <button class="btn btn-success btn-sm">✓</button>
+                </form>
+                <form method="POST" action="/admin/approvals/transfers/<%= tx.id %>/reject" style="display:inline;">
+                  <button class="btn btn-danger btn-sm">✕</button>
+                </form>
+              <% } %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/layouts/admin-end') -%>
+
+

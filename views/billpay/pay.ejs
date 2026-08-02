@@ -1,0 +1,139 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/billpay" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← Bills Hub</a>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">📄 Pay a Bill (BPAY®)</h3></div>
+    <div class="card-body">
+      <form method="POST" action="/billpay/pay">
+        <div class="form-group">
+          <label class="form-label">From Account *</label>
+          <select name="account_id" required class="form-select">
+            <% accounts.forEach(acc => { %>
+              <option value="<%= acc.id %>"><%= acc.account_type %> • Available: <%= currency(acc.available_balance) %></option>
+            <% }) %>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Select Biller (optional)</label>
+          <select class="form-select" id="billerSelect" onchange="fillBiller()">
+            <option value="">Enter biller details manually...</option>
+            <% billers.forEach(biller => { %>
+              <option value="<%= biller.code %>" data-name="<%= biller.name %>" <%= selectedBiller && selectedBiller.code === biller.code ? 'selected' : '' %>><%= biller.name %> — BPAY Code <%= biller.code %></option>
+            <% }) %>
+          </select>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Biller Name *</label>
+            <input type="text" name="biller_name" id="billerName" required class="form-input" placeholder="e.g. Telstra" value="<%= selectedBiller ? selectedBiller.name : '' %>">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Biller Code (BPAY) *</label>
+            <input type="text" name="biller_code" id="billerCode" required class="form-input" placeholder="e.g. 900001" maxlength="10" value="<%= selectedBiller ? selectedBiller.code : '' %>">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Customer Reference Number *</label>
+          <input type="text" name="customer_ref" required class="form-input" placeholder="Your customer / invoice number">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Payment Amount (AUD) *</label>
+          <div style="position:relative;">
+            <span style="position:absolute;left:16px;top:50%;transform:translateY(-50%);font-weight:600;color:var(--text-gray);">$</span>
+            <input type="number" name="amount" id="billAmount" required min="1" step="0.01" value="150" class="form-input" style="padding-left:32px;">
+          </div>
+          <span class="form-hint">Amounts over $3,000 may require admin approval for your security.</span>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Payment Date</label>
+            <select name="payment_time" class="form-select" onchange="toggleDate()">
+              <option value="now">⚡ Pay Immediately</option>
+              <option value="scheduled">📅 Schedule for later</option>
+            </select>
+          </div>
+          <div class="form-group" id="dateWrap" style="display:none;">
+            <label class="form-label">Scheduled Date</label>
+            <input type="date" name="scheduled_date" class="form-input">
+          </div>
+        </div>
+
+        <div class="alert alert-info" style="margin-bottom:20px;">
+          <span class="alert-icon">ℹ️</span>
+          <div class="alert-content">
+            <div class="alert-title">BPAY Information</div>
+            <p class="alert-message" style="margin:0;font-size:0.85rem;">BPAY payments before 6pm AEST are processed same business day. Scheduled payments are processed 2am AEST on the due date.</p>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg btn-block">✅ Review & Confirm Payment</button>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">💳 Payment Summary</h3></div>
+      <div class="card-body">
+        <div style="padding:16px 0 20px;text-align:center;border-bottom:1px solid var(--border);margin-bottom:16px;">
+          <div style="font-size:0.78rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Payment Amount</div>
+          <div style="font-size:2.5rem;font-weight:900;color:var(--danger);">$<span id="amtDisplay">150.00</span></div>
+          <div style="color:var(--text-gray);font-size:0.9rem;" id="billerDisplay">Biller: <%= selectedBiller ? selectedBiller.name : '—' %></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:8px 0;">
+          <span style="color:var(--text-gray);">Processing fee</span>
+          <strong style="color:var(--success);">$0.00 Free</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:12px 0 0;border-top:2px solid var(--border);margin-top:8px;font-weight:700;font-size:1.05rem;">
+          <span>Total</span>
+          <strong style="color:var(--primary);">$<span id="totalDisplay">150.00</span></strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">⚡ Quick Amounts</h3></div>
+      <div class="card-body" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+        <button class="btn btn-light" onclick="document.getElementById('billAmount').value=50;updateBillDisplay();">$50</button>
+        <button class="btn btn-light" onclick="document.getElementById('billAmount').value=100;updateBillDisplay();">$100</button>
+        <button class="btn btn-light" onclick="document.getElementById('billAmount').value=250;updateBillDisplay();">$250</button>
+        <button class="btn btn-light" onclick="document.getElementById('billAmount').value=500;updateBillDisplay();">$500</button>
+        <button class="btn btn-light" onclick="document.getElementById('billAmount').value=1000;updateBillDisplay();">$1,000</button>
+        <button class="btn btn-light" onclick="document.getElementById('billAmount').value=2000;updateBillDisplay();">$2,000</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function updateBillDisplay() {
+  const amt = parseFloat(document.getElementById('billAmount').value) || 0;
+  document.getElementById('amtDisplay').textContent = amt.toLocaleString('en-AU', {minimumFractionDigits: 2});
+  document.getElementById('totalDisplay').textContent = amt.toLocaleString('en-AU', {minimumFractionDigits: 2});
+}
+function toggleDate() {
+  document.getElementById('dateWrap').style.display = document.querySelector('[name=payment_time]').value === 'scheduled' ? 'block' : 'none';
+}
+function fillBiller() {
+  const opt = document.getElementById('billerSelect').selectedOptions[0];
+  if (opt.value) {
+    document.getElementById('billerName').value = opt.dataset.name;
+    document.getElementById('billerCode').value = opt.value;
+    document.getElementById('billerDisplay').textContent = 'Biller: ' + opt.dataset.name;
+  }
+}
+document.getElementById('billAmount').addEventListener('input', updateBillDisplay);
+document.getElementById('billerName').addEventListener('input', () => document.getElementById('billerDisplay').textContent = 'Biller: ' + (document.getElementById('billerName').value || '—'));
+setTimeout(() => { fillBiller(); updateBillDisplay(); }, 50);
+</script>
+
+<%- include('../partials/layouts/user-end') -%>
+
+

@@ -1,0 +1,183 @@
+<% const pageScripts = ['/js/loans.js']; %>
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/loans" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← All Loans</a>
+
+<div class="section-header" style="text-align:left;margin-bottom:24px;">
+  <span class="section-eyebrow">🏦 Loan Application</span>
+  <h2 style="font-size:2rem;margin:12px 0 8px;">Apply for a loan today</h2>
+  <p style="margin:0;">Most applications receive a decision within 1 business day.</p>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">📝 Application Form</h3></div>
+    <div class="card-body">
+      <form method="POST" action="/loans/apply">
+        <div class="form-group">
+          <label class="form-label">Loan Type *</label>
+          <select name="loan_type" required class="form-select" id="loanTypeSelect" onchange="updateLoanCalc()">
+            <% loanTypes.forEach(l => { %>
+              <option value="<%= l.type %>" data-min="<%= l.min_val %>" data-max="<%= l.max_val %>" data-rate="<%= l.rate_val %>" data-defaultterm="<%= l.default_term %>" <%= (typeof selectedLoanType !== 'undefined' && selectedLoanType === l.type) ? 'selected' : '' %>>
+                <%= l.name %> • from <%= l.rate %>
+              </option>
+            <% }) %>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Purpose of Loan *</label>
+          <input type="text" name="purpose" required class="form-input" placeholder="e.g. Home renovation, buy a car, debt consolidation">
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Loan Amount (AUD) *</label>
+            <div style="position:relative;">
+              <span style="position:absolute;left:16px;top:50%;transform:translateY(-50%);font-weight:600;color:var(--text-gray);">$</span>
+              <input type="number" name="principal_amount" id="loanAmount" required min="1000" step="500" value="25000" class="form-input" style="padding-left:32px;">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Term (Months) *</label>
+            <select name="term_months" id="termMonths" required class="form-select" onchange="updateLoanCalc()">
+              <option value="6">6 months</option>
+              <option value="12">12 months</option>
+              <option value="24" selected>24 months</option>
+              <option value="36">36 months (3 yr)</option>
+              <option value="60">60 months (5 yr)</option>
+              <option value="120">120 months (10 yr)</option>
+              <option value="240">240 months (20 yr)</option>
+              <option value="360">360 months (30 yr)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Employment Status *</label>
+            <select name="employment_status" required class="form-select">
+              <option value="full_time">Full-time Employed</option>
+              <option value="part_time">Part-time</option>
+              <option value="casual">Casual</option>
+              <option value="self_employed">Self-Employed</option>
+              <option value="retired">Retired</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Annual Income (AUD) *</label>
+            <input type="number" name="annual_income" required min="0" step="1000" class="form-input" placeholder="e.g. 85000">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Depositing Account *</label>
+          <select name="account_id" required class="form-select">
+            <% accounts.forEach(acc => { %>
+              <option value="<%= acc.id %>"><%= acc.account_type %> • <%= currency(acc.balance) %></option>
+            <% }) %>
+          </select>
+        </div>
+
+        <% if (!user.is_verified) { %>
+          <div class="alert alert-warning" style="margin-bottom:20px;">
+            <span class="alert-icon">⚠️</span>
+            <div class="alert-content">
+              <div class="alert-title">KYC Required</div>
+              <p class="alert-message" style="margin:0;">Loan approvals require KYC verification. <a href="/kyc/submit" style="color:var(--primary);font-weight:700;">Complete KYC →</a></p>
+            </div>
+          </div>
+        <% } %>
+
+        <button type="submit" class="btn btn-primary btn-lg btn-block">✅ Submit Loan Application</button>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">🧮 Repayment Calculator</h3></div>
+      <div class="card-body">
+        <div style="text-align:center;padding:10px 0 20px;">
+          <div style="font-size:0.8rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Estimated Monthly Repayment</div>
+          <div style="font-size:2.8rem;font-weight:900;color:var(--primary);" id="monthlyPayment">$0</div>
+          <div style="color:var(--text-gray);font-size:0.9rem;margin-top:4px;" id="interestRate">Interest rate —% p.a.</div>
+        </div>
+        <div style="padding:16px;background:var(--bg-gray);border-radius:var(--radius);">
+          <div style="display:grid;gap:10px;">
+            <div style="display:flex;justify-content:space-between;font-size:0.9rem;">
+              <span style="color:var(--text-gray);">Principal Amount</span>
+              <strong id="sumPrincipal">$0</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:0.9rem;">
+              <span style="color:var(--text-gray);">Total Interest</span>
+              <strong id="sumInterest" style="color:var(--warning);">$0</strong>
+            </div>
+            <div style="padding-top:10px;border-top:2px solid var(--border);margin-top:6px;display:flex;justify-content:space-between;font-weight:700;font-size:1.05rem;">
+              <span>Total Repayment</span>
+              <strong id="sumTotal" style="color:var(--text-dark);">$0</strong>
+            </div>
+          </div>
+        </div>
+        <div class="alert alert-info" style="margin-top:16px;margin-bottom:0;">
+          <span class="alert-icon">ℹ️</span>
+          <div class="alert-content">
+            <div class="alert-title">Estimate only</div>
+            <p class="alert-message" style="margin:0;font-size:0.85rem;">Based on current indicative rates. Final rate and repayment will be confirmed upon approval based on your circumstances.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">💡 Why UCB Loans?</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;">
+          <div style="font-size:1.5rem;">⚡</div>
+          <div>
+            <div style="font-weight:700;font-size:0.95rem;">Fast approval</div>
+            <div style="font-size:0.85rem;color:var(--text-light);">Most customers get a decision same day</div>
+          </div>
+        </div>
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;">
+          <div style="font-size:1.5rem;">💰</div>
+          <div>
+            <div style="font-weight:700;font-size:0.95rem;">No hidden fees</div>
+            <div style="font-size:0.85rem;color:var(--text-light);">Redraw facilities & offset accounts available</div>
+          </div>
+        </div>
+        <div style="padding:16px 20px;display:flex;gap:12px;">
+          <div style="font-size:1.5rem;">🔒</div>
+          <div>
+            <div style="font-weight:700;font-size:0.95rem;">APRA regulated</div>
+            <div style="font-size:0.85rem;color:var(--text-light);">Australian bank, Australian standards, Australian support</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function updateLoanCalc() {
+  const sel = document.getElementById('loanTypeSelect').selectedOptions[0];
+  let P = parseFloat(document.getElementById('loanAmount').value) || 0;
+  const rate = parseFloat(sel?.dataset.rate) || 6;
+  const n = parseInt(document.getElementById('termMonths').value) || 12;
+  const r = (rate / 100) / 12;
+  const emi = r > 0 ? (P * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1) : P / n;
+  const total = emi * n;
+  const interest = total - P;
+  document.getElementById('monthlyPayment').textContent = '$' + emi.toLocaleString('en-AU', {maximumFractionDigits: 0, minimumFractionDigits: 0});
+  document.getElementById('interestRate').textContent = 'Interest rate ' + rate.toFixed(2) + '% p.a.';
+  document.getElementById('sumPrincipal').textContent = '$' + P.toLocaleString('en-AU');
+  document.getElementById('sumInterest').textContent = '$' + interest.toLocaleString('en-AU', {maximumFractionDigits: 0});
+  document.getElementById('sumTotal').textContent = '$' + total.toLocaleString('en-AU', {maximumFractionDigits: 0});
+}
+document.getElementById('loanAmount').addEventListener('input', updateLoanCalc);
+setTimeout(updateLoanCalc, 100);
+</script>
+
+<%- include('../partials/layouts/user-end', { pageScripts }) -%>
+
+

@@ -1,0 +1,127 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+  <div>
+    <h2 style="margin:0;">🏦 My Loans & Finance</h2>
+    <p style="margin:4px 0 0;color:var(--text-gray);">Manage your current loans and view new options.</p>
+  </div>
+  <a href="/loans/apply/new" class="btn btn-primary btn-lg">➕ Apply for Loan</a>
+</div>
+
+<% if (loans.length > 0) { %>
+<div style="display:grid;gap:20px;margin-bottom:28px;">
+  <% loans.forEach(loan => { 
+    const progress = Math.min(100, parseFloat(loan.amount_paid) / parseFloat(loan.total_amount) * 100);
+  %>
+    <div class="card">
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:16px;">
+        <div style="display:flex;gap:16px;align-items:center;flex:1;">
+          <div class="user-avatar" style="width:56px;height:56px;font-size:1.5rem;background:linear-gradient(135deg,#C8102E,#7A0A1D);color:white;">🏦</div>
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <h3 style="margin:0;font-size:1.15rem;"><%= loan.loan_type %></h3>
+              <span class="status-badge status-<%= loan.status %>"><%= loan.status %></span>
+            </div>
+            <div style="font-size:0.85rem;color:var(--text-gray);margin-top:4px;">
+              Loan #<%= String(loan.id).padStart(6, '0') %> • Opened <%= moment(loan.approved_at || loan.created_at).format('DD MMM YYYY') %>
+            </div>
+          </div>
+        </div>
+        <a href="/loans/<%= loan.id %>" class="btn btn-outline btn-sm">Manage Loan →</a>
+      </div>
+      <div style="padding:24px;">
+        <div class="stat-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px;">
+          <div style="padding:14px;background:var(--bg-gray);border-radius:var(--radius);">
+            <div style="font-size:0.75rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Total Loan</div>
+            <div style="font-weight:800;font-size:1.25rem;margin-top:4px;"><%= currency(loan.principal_amount) %></div>
+          </div>
+          <div style="padding:14px;background:var(--bg-gray);border-radius:var(--radius);">
+            <div style="font-size:0.75rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Remaining</div>
+            <div style="font-weight:800;font-size:1.25rem;margin-top:4px;color:var(--danger);"><%= currency(parseFloat(loan.total_amount) - parseFloat(loan.amount_paid)) %></div>
+          </div>
+          <div style="padding:14px;background:var(--bg-gray);border-radius:var(--radius);">
+            <div style="font-size:0.75rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Monthly Repayment</div>
+            <div style="font-weight:800;font-size:1.25rem;margin-top:4px;color:var(--primary);"><%= currency(loan.monthly_payment) %></div>
+          </div>
+          <div style="padding:14px;background:var(--bg-gray);border-radius:var(--radius);">
+            <div style="font-size:0.75rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Interest Rate</div>
+            <div style="font-weight:800;font-size:1.25rem;margin-top:4px;"><%= parseFloat(loan.interest_rate).toFixed(2) %>% p.a.</div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:250px;">
+            <div style="display:flex;justify-content:space-between;font-size:0.85rem;margin-bottom:6px;">
+              <span style="color:var(--text-gray);">Repayment Progress</span>
+              <strong><%= progress.toFixed(1) %>%</strong>
+            </div>
+            <div class="progress"><div class="progress-bar" style="width:<%= progress %>%;"></div></div>
+            <div style="font-size:0.8rem;color:var(--text-light);margin-top:6px;">
+              Paid <%= currency(loan.amount_paid) %> of <%= currency(loan.total_amount) %> • 
+              <%= loan.term_months %> months • Ends <%= moment(loan.approved_at || loan.created_at).add(loan.term_months, 'months').format('MMM YYYY') %>
+            </div>
+          </div>
+          <% if (loan.status === 'active') { %>
+            <a href="/loans/<%= loan.id %>" class="btn btn-primary">💳 Make Payment</a>
+          <% } %>
+        </div>
+      </div>
+    </div>
+  <% }) %>
+</div>
+<% } else { %>
+<div class="card" style="margin-bottom:28px;">
+  <div class="card-body">
+    <div class="empty-state">
+      <div class="empty-state-icon">🏦</div>
+      <h4>No active loans</h4>
+      <p>Explore our competitive loan rates — from personal loans to home loans, we've got you covered.</p>
+      <a href="/loans/apply/new" class="btn btn-primary btn-lg" style="margin-top:16px;">🚀 Apply for Loan</a>
+    </div>
+  </div>
+</div>
+<% } %>
+
+<div class="section-header" style="text-align:left;">
+  <span class="section-eyebrow">💼 Available Loans</span>
+  <h2 style="font-size:1.6rem;margin:12px 0 4px;">Compare our loan products</h2>
+  <p style="margin:0;">Fast approvals, flexible terms, and competitive Australian interest rates.</p>
+</div>
+
+<div class="features-grid" style="margin-top:20px;">
+  <% loanTypes.forEach(l => { %>
+    <div class="feature-card">
+      <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:14px;">
+        <div class="feature-icon" style="width:52px;height:52px;font-size:1.5rem;border-radius:14px;
+          background:<%= l.type.includes('Home') ? 'linear-gradient(135deg,#059669,#047857)' : l.type.includes('Car') ? 'linear-gradient(135deg,#2563EB,#1D4ED8)' : l.type.includes('Business') ? 'linear-gradient(135deg,#7C3AED,#6D28D9)' : l.type.includes('Education') ? 'linear-gradient(135deg,#0891B2,#0E7490)' : l.type.includes('Line') ? 'linear-gradient(135deg,#DB2777,#BE185D)' : 'linear-gradient(135deg,#C8102E,#7A0A1D)' %>;">
+          🏦
+        </div>
+        <span class="tag" style="background:var(--primary-alpha);color:var(--primary);font-weight:700;"><%= l.rate %></span>
+      </div>
+      <h4 class="feature-title"><%= l.name %></h4>
+      <p class="feature-desc" style="margin-bottom:14px;"><%= l.desc %></p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+        <div style="padding:10px 12px;background:var(--bg-gray);border-radius:10px;">
+          <div style="font-size:0.7rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Min</div>
+          <div style="font-weight:700;"><%= l.min %></div>
+        </div>
+        <div style="padding:10px 12px;background:var(--bg-gray);border-radius:10px;">
+          <div style="font-size:0.7rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Max</div>
+          <div style="font-weight:700;"><%= l.max %></div>
+        </div>
+        <div style="padding:10px 12px;background:var(--bg-gray);border-radius:10px;">
+          <div style="font-size:0.7rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Term</div>
+          <div style="font-weight:700;"><%= l.term %></div>
+        </div>
+        <div style="padding:10px 12px;background:var(--bg-gray);border-radius:10px;">
+          <div style="font-size:0.7rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Rate</div>
+          <div style="font-weight:700;color:var(--primary);"><%= l.rate %></div>
+        </div>
+      </div>
+      <a href="/loans/apply/new?type=<%= encodeURIComponent(l.type) %>" class="btn btn-primary btn-block btn-sm">Apply Now</a>
+    </div>
+  <% }) %>
+</div>
+
+<%- include('../partials/layouts/user-end') -%>
+
+

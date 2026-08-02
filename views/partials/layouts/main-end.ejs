@@ -1,0 +1,27 @@
+  </main>
+  <%- include('../footer') %>
+  <% if (typeof error !== 'undefined' && error) { %>
+    <div id="toast-error" class="alert alert-danger" style="position:fixed;top:20px;right:20px;z-index:9999;max-width:400px;box-shadow:0 10px 30px rgba(0,0,0,0.15);">
+      <span class="alert-icon"></span>
+      <div class="alert-content">
+        <div class="alert-title">Error</div>
+        <p class="alert-message"><%= error %></p>
+      </div>
+    </div>
+  <% } %>
+  <% if (typeof success !== 'undefined' && success) { %>
+    <div id="toast-success" class="alert alert-success" style="position:fixed;top:20px;right:20px;z-index:9999;max-width:400px;box-shadow:0 10px 30px rgba(0,0,0,0.15);">
+      <span class="alert-icon"></span>
+      <div class="alert-content">
+        <div class="alert-title">Success</div>
+        <p class="alert-message"><%= success %></p>
+      </div>
+    </div>
+  <% } %>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+  <script src="/js/common.js"></script>
+  <% if (typeof pageScripts !== 'undefined' && pageScripts) { pageScripts.forEach(s => { %>
+    <script src="<%= s %>"></script>
+  <% }) } %>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+  <div>
+    <h2 style="margin:0;">🔔 Notifications</h2>
+    <p style="margin:4px 0 0;color:var(--text-gray);">Stay updated with your account activity, approvals, and messages from us.</p>
+  </div>
+  <button class="btn btn-outline btn-sm">📭 Mark All as Read</button>
+</div>
+
+<div class="card">
+  <div class="card-body" style="padding:0;">
+    <% if (notifications.length === 0) { %>
+      <div class="empty-state" style="padding:60px 20px;">
+        <div class="empty-state-icon" style="width:80px;height:80px;font-size:2.5rem;">🔔</div>
+        <h4>All caught up!</h4>
+        <p>You don't have any notifications right now. You'll get notified here when something happens with your account.</p>
+      </div>
+    <% } %>
+    <% notifications.forEach(n => { %>
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border);display:flex;gap:16px;align-items:flex-start;background:<%= !n.is_read ? 'var(--primary-alpha)' : 'transparent' %>;" class="notif-item" data-id="<%= n.id %>">
+        <div style="width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+          background:<%= n.type === 'success' ? 'var(--success-light)' : n.type === 'warning' ? 'var(--warning-light)' : n.type === 'error' ? 'var(--danger-light)' : 'var(--info-light)' %>;
+          font-size:1.3rem;">
+          <%= n.type === 'success' ? '✅' : n.type === 'warning' ? '⚠️' : n.type === 'error' ? '❌' : 'ℹ️' %>
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;justify-content:space-between;align-items:start;gap:12px;">
+            <div style="font-weight:<%= !n.is_read ? 700 : 600 %>;font-size:0.95rem;"><%= n.title %></div>
+            <div style="font-size:0.75rem;color:var(--text-light);white-space:nowrap;"><%= moment(n.created_at).fromNow() %></div>
+          </div>
+          <div style="font-size:0.9rem;color:var(--text-gray);margin-top:4px;"><%= n.message %></div>
+          <% if (!n.is_read) { %>
+            <span class="status-badge status-pending" style="margin-top:8px;">New</span>
+          <% } %>
+        </div>
+      </div>
+    <% }) %>
+  </div>
+</div>
+
+<%- include('../partials/layouts/user-end') -%>
+

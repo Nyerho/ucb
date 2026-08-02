@@ -1,0 +1,149 @@
+<% const pageScripts = ['/js/kyc.js']; %>
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/kyc" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← Back to KYC</a>
+
+<div class="section-header" style="text-align:left;margin-bottom:24px;">
+  <span class="section-eyebrow">🆔 Identity Verification</span>
+  <h2 style="font-size:2rem;margin:12px 0 8px;">Verify your identity</h2>
+  <p style="margin:0;">Takes less than 3 minutes. Approved within 4 business hours Mon-Fri.</p>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">📝 Submit Verification</h3></div>
+    <div class="card-body">
+      <form method="POST" action="/kyc/submit" enctype="multipart/form-data">
+        <div class="form-group">
+          <label class="form-label">Choose Document Type *</label>
+          <select name="document_type" required class="form-select">
+            <% documentTypes.forEach(d => { %>
+              <option value="<%= d %>"><%= d %></option>
+            <% }) %>
+          </select>
+          <span class="form-hint">Must be valid, in-date, and government-issued Australian ID where applicable.</span>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Document Number *</label>
+            <input type="text" name="document_number" required class="form-input" placeholder="Licence number / Passport # etc">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Expiry Date *</label>
+            <input type="date" name="expiry_date" required class="form-input">
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">First Name (per document) *</label>
+            <input type="text" name="first_name" required class="form-input" value="<%= user.first_name %>">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Last Name (per document) *</label>
+            <input type="text" name="last_name" required class="form-input" value="<%= user.last_name %>">
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Date of Birth *</label>
+            <input type="date" name="date_of_birth" required class="form-input" value="<%= user.date_of_birth || '' %>">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Country of Issue</label>
+            <input type="text" name="country" class="form-input" value="Australia">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Upload Document (Front) *</label>
+          <input type="file" name="document_front" required accept="image/*,.pdf" class="form-input" style="padding:10px;">
+          <span class="form-hint">Clear, in-colour photo or scan. File size under 5MB.</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Upload Document (Back) *</label>
+          <input type="file" name="document_back" required accept="image/*,.pdf" class="form-input" style="padding:10px;">
+        </div>
+
+        <div class="alert alert-info" style="margin-bottom:20px;">
+          <span class="alert-icon">🔒</span>
+          <div class="alert-content">
+            <div class="alert-title">Your privacy protected</div>
+            <p class="alert-message" style="margin:0;font-size:0.88rem;">
+              Documents are encrypted and stored securely per Australian Privacy Act principles. Only verified staff review your documents.
+            </p>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+          <input type="checkbox" id="kycAgree" required class="form-checkbox">
+          <label for="kycAgree" style="font-size:0.88rem;color:var(--text-gray);margin:0;">
+            I confirm the documents are my own, are not altered, and consent to identity verification checks.
+          </label>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg btn-block">✅ Submit Verification</button>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">✅ What You Unlock</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start;">
+          <div style="width:28px;height:28px;border-radius:50%;background:var(--success-light);color:var(--success);display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">✓</div>
+          <div>
+            <div style="font-weight:700;">💳 Cards & Credit</div>
+            <div style="font-size:0.82rem;color:var(--text-light);">Apply for debit, credit, and travel cards</div>
+          </div>
+        </div>
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start;">
+          <div style="width:28px;height:28px;border-radius:50%;background:var(--success-light);color:var(--success);display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">✓</div>
+          <div>
+            <div style="font-weight:700;">🏦 Loans & Finance</div>
+            <div style="font-size:0.82rem;color:var(--text-light);">Access personal, home, car, and business loans</div>
+          </div>
+        </div>
+        <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start;">
+          <div style="width:28px;height:28px;border-radius:50%;background:var(--success-light);color:var(--success);display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">✓</div>
+          <div>
+            <div style="font-weight:700;">💹 Higher Limits</div>
+            <div style="font-size:0.82rem;color:var(--text-light);">$50K daily transfer, $5K instant approval</div>
+          </div>
+        </div>
+        <div style="padding:16px 20px;display:flex;gap:12px;align-items:flex-start;">
+          <div style="width:28px;height:28px;border-radius:50%;background:var(--success-light);color:var(--success);display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">✓</div>
+          <div>
+            <div style="font-weight:700;">🌍 International Transfers</div>
+            <div style="font-size:0.82rem;color:var(--text-light);">Send money to 100+ countries worldwide</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">💡 Tips for Fast Approval</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);">
+          <div style="font-weight:700;font-size:0.9rem;">📷 Good lighting, clear photo</div>
+          <div style="font-size:0.82rem;color:var(--text-light);">Natural daylight, no flash glare, all four corners visible</div>
+        </div>
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);">
+          <div style="font-weight:700;font-size:0.9rem;">🎨 Colour scans only</div>
+          <div style="font-size:0.82rem;color:var(--text-light);">Black and white copies cannot be verified</div>
+        </div>
+        <div style="padding:14px 20px;">
+          <div style="font-weight:700;font-size:0.9rem;">⏰ Use current documents</div>
+          <div style="font-size:0.82rem;color:var(--text-light);">Expired documents cannot be accepted</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/layouts/user-end', { pageScripts }) -%>
+

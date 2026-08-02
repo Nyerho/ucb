@@ -1,0 +1,164 @@
+<% const pageScripts = ['/js/admin-dashboard.js']; %>
+<%- include('../partials/layouts/admin-start') -%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+  <div>
+    <h2 style="margin:0;">👑 Admin Dashboard</h2>
+    <p style="margin:4px 0 0;color:var(--text-gray);">Welcome back <%= user.first_name %>. Here's an overview of United Credit Bank operations.</p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a href="/admin/approvals" class="btn btn-primary">⏳ Pending Approvals <%= pendingCount > 0 ? `(${pendingCount})` : '' %></a>
+    <a href="/admin/reports" class="btn btn-outline">📊 Reports</a>
+  </div>
+</div>
+
+<div class="stat-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px;">
+  <div class="stat-card">
+    <div class="stat-header">
+      <div>
+        <div class="stat-label">Total Customers</div>
+        <div class="stat-value"><%= stats.totalCustomers.toLocaleString() %></div>
+      </div>
+      <div class="stat-icon stat-icon-primary">👥</div>
+    </div>
+    <div class="stat-change up">+<%= stats.newThisWeek %> this week</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-header">
+      <div>
+        <div class="stat-label">Active Accounts</div>
+        <div class="stat-value"><%= stats.totalAccounts.toLocaleString() %></div>
+      </div>
+      <div class="stat-icon stat-icon-success">🏦</div>
+    </div>
+    <div class="stat-change">Total deposits: <%= currency(stats.totalDeposits) %></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-header">
+      <div>
+        <div class="stat-label">Transactions Today</div>
+        <div class="stat-value"><%= stats.todayTransactions.toLocaleString() %></div>
+      </div>
+      <div class="stat-icon stat-icon-info">💸</div>
+    </div>
+    <div class="stat-change up">Vol <%= currency(stats.todayVolume) %></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-header">
+      <div>
+        <div class="stat-label">Pending Review</div>
+        <div class="stat-value" style="color:var(--warning);"><%= pendingCount.toLocaleString() %></div>
+      </div>
+      <div class="stat-icon stat-icon-warning">⏳</div>
+    </div>
+    <div class="stat-change down">
+      <a href="/admin/approvals" style="color:var(--warning);font-weight:700;">Review →</a>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-header">
+      <div>
+        <div class="stat-label">Active Cards</div>
+        <div class="stat-value"><%= stats.activeCards.toLocaleString() %></div>
+      </div>
+      <div class="stat-icon stat-icon-primary">💳</div>
+    </div>
+    <div class="stat-change"><%= stats.pendingCards %> pending applications</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-header">
+      <div>
+        <div class="stat-label">Loans Outstanding</div>
+        <div class="stat-value"><%= currency(stats.totalLoansOutstanding) %></div>
+      </div>
+      <div class="stat-icon stat-icon-success">🏦</div>
+    </div>
+    <div class="stat-change"><%= stats.activeLoans %> active loans</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-header">
+      <div>
+        <div class="stat-label">Frozen Accounts</div>
+        <div class="stat-value" style="color:var(--danger);"><%= stats.frozenAccounts.toLocaleString() %></div>
+      </div>
+      <div class="stat-icon stat-icon-warning">❄️</div>
+    </div>
+    <div class="stat-change down"><a href="/admin/users" style="color:var(--text-gray);">Manage →</a></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-header">
+      <div>
+        <div class="stat-label">Unverified KYC</div>
+        <div class="stat-value" style="color:var(--warning);"><%= stats.unverifiedCustomers.toLocaleString() %></div>
+      </div>
+      <div class="stat-icon stat-icon-warning">🆔</div>
+    </div>
+    <div class="stat-change down"><a href="/admin/approvals?tab=kyc" style="color:var(--warning);font-weight:700;">Approve →</a></div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">🆕 New Customers</h3>
+      <a href="/admin/users" class="btn btn-outline btn-sm">All Users</a>
+    </div>
+    <div class="card-body" style="padding:0;">
+      <% if (!recentUsers || recentUsers.length === 0) { %>
+        <div class="empty-state" style="padding:40px 20px;"><div class="empty-state-icon" style="width:48px;height:48px;font-size:1.3rem;">👥</div><h4>No new users</h4></div>
+      <% } %>
+      <% (recentUsers || []).forEach(u => { %>
+        <div style="padding:14px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;cursor:pointer;" onclick="location.href='/admin/users/<%= u.id %>'">
+          <div class="user-avatar" style="width:40px;height:40px;font-size:0.85rem;"><%= (u.first_name||'?').charAt(0) + (u.last_name||'').charAt(0) %></div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;font-size:0.92rem;"><%= u.first_name %> <%= u.last_name %></div>
+            <div style="font-size:0.78rem;color:var(--text-light);"><%= u.email %></div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:0.82rem;color:var(--text-gray);"><%= moment(u.created_at).format('DD MMM') %></div>
+            <div style="display:flex;gap:4px;margin-top:3px;justify-content:flex-end;">
+              <% if (u.is_frozen) { %><span class="status-badge status-frozen">Frozen</span>
+              <% } else if (u.is_verified) { %><span class="status-badge status-active">Verified</span>
+              <% } else { %><span class="status-badge status-pending">Unverified</span><% } %>
+            </div>
+          </div>
+        </div>
+      <% }) %>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">💸 Recent Transactions</h3>
+      <a href="/admin/transactions" class="btn btn-outline btn-sm">View All</a>
+    </div>
+    <div class="card-body" style="padding:0;">
+      <% if (!recentTransactions || recentTransactions.length === 0) { %>
+        <div class="empty-state" style="padding:40px 20px;"><div class="empty-state-icon" style="width:48px;height:48px;font-size:1.3rem;">💸</div><h4>No recent transactions</h4></div>
+      <% } %>
+      <% (recentTransactions || []).forEach(tx => { 
+        const isOut = ['withdrawal','local_transfer','international_transfer','bill_payment','loan_payment'].includes(tx.transaction_type);
+      %>
+        <div style="padding:14px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;cursor:pointer;" onclick="location.href='/admin/transactions'">
+          <div style="width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:<%= isOut ? 'var(--danger-light)' : 'var(--success-light)' %>;color:<%= isOut ? 'var(--danger)' : 'var(--success)' %>;font-weight:700;">
+            <%= isOut ? '→' : '←' %>
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;font-size:0.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><%= tx.recipient_name || tx.description || tx.transaction_type.replace(/_/g,' ') %></div>
+            <div style="font-size:0.78rem;color:var(--text-light);">
+              TX-<%= String(tx.id).padStart(6, '0') %> • <%= moment(tx.created_at).format('DD MMM HH:mm') %>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-weight:700;color:<%= isOut ? 'var(--danger)' : 'var(--success)' %>;"><%= isOut ? '-' : '+' %><%= currency(Math.abs(tx.amount)) %></div>
+            <span class="status-badge status-<%= tx.status %>" style="font-size:0.65rem;margin-top:3px;"><%= tx.status %></span>
+          </div>
+        </div>
+      <% }) %>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/layouts/admin-end', { pageScripts }) -%>
+
+

@@ -1,0 +1,27 @@
+<%- include('../partials/layouts/main-start') -%>
+
+<section class="hero" style="min-height:70vh;display:flex;align-items:center;">
+  <div class="container">
+    <div style="max-width:600px;margin:0 auto;text-align:center;">
+      <div style="font-size:6rem;font-weight:800;color:var(--primary);margin-bottom:16px;letter-spacing:-0.05em;">500</div>
+      <span class="section-eyebrow">❌ Server Error</span>
+      <h1 style="font-size:2.5rem;margin:16px 0;">Something went wrong on our end.</h1>
+      <p class="hero-subtitle" style="margin:0 auto 32px;">Our team has been notified and is working to fix this as quickly as possible. Please try again in a few minutes.</p>
+      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+        <a href="/" class="btn btn-primary btn-lg">🏠 Back to Home</a>
+        <a href="/contact" class="btn btn-outline btn-lg">📞 Contact Support</a>
+      </div>
+      <% if (typeof error !== 'undefined' && error) { %>
+        <div class="card" style="margin-top:40px;text-align:left;">
+          <div class="card-header"><h3 class="card-title">🐛 Error Details (Development Only)</h3></div>
+          <div class="card-body">
+            <pre style="background:var(--bg-gray);padding:16px;border-radius:var(--radius-sm);overflow-x:auto;font-size:0.85rem;white-space:pre-wrap;"><%= error %></pre>
+          </div>
+        </div>
+      <% } %>
+    </div>
+  </div>
+</section>
+
+<%- include('../partials/layouts/main-end') -%>
+

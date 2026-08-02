@@ -1,0 +1,51 @@
+<%- include('../partials/layouts/admin-start') -%>
+
+<h2 style="margin-bottom:16px;">🏦 Manage Loans (200)</h2>
+
+<div class="card">
+  <div class="filter-bar">
+    <div class="filter-group"><span class="filter-label">Search</span><input type="text" class="form-input" placeholder="Customer name or ID"></div>
+    <div class="filter-group"><span class="filter-label">Type</span>
+      <select class="form-select"><option value="">All Types</option><option>Personal</option><option>Home</option><option>Car</option><option>Business</option><option>Education</option></select>
+    </div>
+    <div class="filter-group"><span class="filter-label">Status</span>
+      <select class="form-select"><option value="">All</option><option>pending</option><option>active</option><option>paid</option><option>rejected</option></select>
+    </div>
+    <button class="btn btn-primary btn-sm">🔍 Filter</button>
+  </div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Customer</th><th>Loan Type</th><th style="text-align:right;">Principal</th><th style="text-align:right;">Remaining</th><th>Term</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>
+        <% loans.forEach(l => { %>
+          <tr>
+            <td><div style="font-weight:600;font-size:0.9rem;"><%= l.user_name || 'User #' + l.user_id %></div>
+              <div style="font-size:0.72rem;color:var(--text-light);">Loan #<%= String(l.id).padStart(6,'0') %></div></td>
+            <td><strong style="font-size:0.85rem;"><%= l.loan_type %></strong>
+              <div style="font-size:0.72rem;color:var(--text-light);"><%= parseFloat(l.interest_rate).toFixed(2) %>% p.a. • Mo <%= currency(l.monthly_payment||0) %></div></td>
+            <td style="text-align:right;font-weight:700;"><%= currency(l.principal_amount) %></td>
+            <td style="text-align:right;font-weight:700;color:<%= parseFloat(l.total_amount)>parseFloat(l.amount_paid)?'var(--danger)':'var(--success)' %>;">
+              <%= currency(Math.max(0,parseFloat(l.total_amount)-parseFloat(l.amount_paid))) %>
+              <div style="font-size:0.7rem;color:var(--text-light);font-weight:500;">
+                <%= (parseFloat(l.amount_paid)/parseFloat(l.total_amount)*100).toFixed(0) %>% paid
+              </div></td>
+            <td><%= l.term_months %> mo</td>
+            <td><span class="status-badge status-<%= l.status %>"><%= l.status %></span></td>
+            <td>
+              <% if (l.status === 'pending') { %>
+                <form method="POST" action="/admin/approvals/loans/<%= l.id %>" style="display:inline;" onsubmit="return confirm('Approve and disburse loan #<%= l.id %>?');">
+                  <button class="btn btn-success btn-sm">✓</button>
+                </form>
+              <% } %>
+              <a href="/loans/<%= l.id %>" target="_blank" class="btn btn-light btn-sm">View</a>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/layouts/admin-end') -%>
+
+

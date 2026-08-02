@@ -1,0 +1,297 @@
+<% const pageScripts = ['/js/home.js']; %>
+<%- include('partials/layouts/main-start') -%>
+
+<%
+%>
+<section class="hero">
+  <div class="container hero-grid">
+    <div>
+      <span class="hero-badge">🇦🇺 Proudly Australian • APRA Regulated</span>
+      <h1>Banking that <span class="accent">works as hard</span> as you do.</h1>
+      <p class="hero-subtitle">
+        Experience the future of banking with United Credit Bank. Competitive rates, award-winning service, and digital tools designed for modern Australians.
+      </p>
+      <div class="hero-cta">
+        <a href="/auth/register" class="btn btn-primary btn-lg">🚀 Open Free Account</a>
+        <a href="/services" class="btn btn-outline btn-lg">Explore Services</a>
+      </div>
+      <div class="hero-stats">
+        <div>
+          <div class="hero-stat-num"><%= stats.customers.toLocaleString() %>K+</div>
+          <div class="hero-stat-label">Happy Customers</div>
+        </div>
+        <div>
+          <div class="hero-stat-num"><%= stats.accounts.toLocaleString() %></div>
+          <div class="hero-stat-label">Active Accounts</div>
+        </div>
+        <div>
+          <div class="hero-stat-num"><%= stats.branches %></div>
+          <div class="hero-stat-label">Branches AU-Wide</div>
+        </div>
+        <div>
+          <div class="hero-stat-num"><%= stats.years %>+</div>
+          <div class="hero-stat-label">Years Serving</div>
+        </div>
+      </div>
+    </div>
+    <div class="hero-card reveal-on-scroll is-visible">
+      <div class="bank-card">
+        <div class="bank-card-chip"></div>
+        <div class="bank-card-number">4539 •••• •••• 2026</div>
+        <div class="bank-card-bottom">
+          <div class="bank-card-holder">
+            <span class="bank-card-label">Card Holder</span>
+            <span class="bank-card-value">JOHN A CITIZEN</span>
+          </div>
+          <div class="bank-card-holder" style="align-items:flex-end;">
+            <span class="bank-card-label">Expires</span>
+            <span class="bank-card-value">12/30</span>
+          </div>
+          <div class="bank-card-logo">
+            UCB<small>VISA PLATINUM</small>
+          </div>
+        </div>
+      </div>
+      <div class="hero-illustration-shell float-y">
+        <img src="/images/hero-banking.svg" alt="Animated United Credit Bank banking illustration" class="hero-illustration">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px;">
+        <div style="padding:12px;background:var(--bg-gray);border-radius:var(--radius);">
+          <div style="font-size:0.7rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Savings Rate</div>
+          <div style="font-size:1.4rem;font-weight:800;color:var(--primary);">4.25%</div>
+          <div style="font-size:0.75rem;color:var(--text-gray);">High Interest Account</div>
+        </div>
+        <div style="padding:12px;background:var(--bg-gray);border-radius:var(--radius);">
+          <div style="font-size:0.7rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Home Loan</div>
+          <div style="font-size:1.4rem;font-weight:800;color:var(--primary);">5.49%</div>
+          <div style="font-size:0.75rem;color:var(--text-gray);">Variable Rate p.a.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-eyebrow">Why Australians Choose Us</span>
+      <h2>Banking built for your lifestyle</h2>
+      <p>From everyday transactions to long-term wealth building, United Credit Bank has the tools and expertise to help you succeed financially.</p>
+    </div>
+    <div class="features-grid">
+      <div class="feature-card reveal-on-scroll">
+        <div class="feature-icon"><img src="/images/icons/instant-transfer.svg" alt="Instant transfer icon"></div>
+        <h3>Instant Transfers</h3>
+        <p>Send and receive money instantly with Osko and NPP payments. Transfer up to $10,000 per day with zero fees.</p>
+        <ul class="feature-list">
+          <li>24/7 real-time payments</li>
+          <li>PayID support for simple addresses</li>
+          <li>$0 transfer fees on local payments</li>
+        </ul>
+      </div>
+      <div class="feature-card reveal-on-scroll">
+        <div class="feature-icon"><img src="/images/icons/global-banking.svg" alt="Global banking icon"></div>
+        <h3>Global Banking</h3>
+        <p>Travel the world or send money to loved ones overseas. Competitive exchange rates with transparent low fees.</p>
+        <ul class="feature-list">
+          <li>50+ currencies supported</li>
+          <li>Low $25 international fee</li>
+          <li>Locked-in exchange rates</li>
+        </ul>
+      </div>
+      <div class="feature-card reveal-on-scroll">
+        <div class="feature-icon"><img src="/images/icons/secure-banking.svg" alt="Secure banking icon"></div>
+        <h3>Bank-Grade Security</h3>
+        <p>Your money is safe with military-grade encryption, 2-factor authentication, and 100% fraud protection guarantee.</p>
+        <ul class="feature-list">
+          <li>256-bit SSL encryption</li>
+          <li>Real-time fraud monitoring</li>
+          <li>Zero-liability fraud policy</li>
+        </ul>
+      </div>
+      <div class="feature-card reveal-on-scroll">
+        <div class="feature-icon"><img src="/images/icons/mobile-banking.svg" alt="Mobile banking icon"></div>
+        <h3>Award-Winning App</h3>
+        <p>Manage your entire financial life on the go with our 5-star rated mobile and internet banking platforms.</p>
+        <ul class="feature-list">
+          <li>4.9★ on App Store (AU)</li>
+          <li>Biometric login & Face ID</li>
+          <li>Instant push notifications</li>
+        </ul>
+      </div>
+      <div class="feature-card reveal-on-scroll">
+        <div class="feature-icon"><img src="/images/icons/rates-growth.svg" alt="Rates growth icon"></div>
+        <h3>Competitive Rates</h3>
+        <p>Some of Australia's best rates on savings accounts, home loans, personal loans, and credit cards.</p>
+        <ul class="feature-list">
+          <li>Up to 4.25% p.a. savings</li>
+          <li>Home loans from 5.49%</li>
+          <li>0% balance transfer cards</li>
+        </ul>
+      </div>
+      <div class="feature-card reveal-on-scroll">
+        <div class="feature-icon"><img src="/images/icons/support-team.svg" alt="Support team icon"></div>
+        <h3>Local Support</h3>
+        <p>Speak with real Australians based in our Sydney, Melbourne, and Brisbane support centres 7 days a week.</p>
+        <ul class="feature-list">
+          <li>1300 UCBANK hotline</li>
+          <li>Live chat agents on standby</li>
+          <li>58 branches across Australia</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="visual-showcase">
+      <div class="showcase-copy reveal-on-scroll">
+        <span class="section-eyebrow">Digital Experience</span>
+        <h2>Bank anywhere with a smoother, more secure experience</h2>
+        <p>United Credit Bank now combines richer visuals, faster actions, stronger transfer protection, and a cleaner responsive layout so the platform feels like a modern banking product on every screen.</p>
+        <div class="hero-cta">
+          <a href="/auth/register" class="btn btn-primary">Open Your Account</a>
+          <a href="/auth/login" class="btn btn-outline">Internet Banking Login</a>
+        </div>
+      </div>
+      <div class="showcase-art reveal-on-scroll">
+        <img src="/images/mobile-dashboard.svg" alt="United Credit Bank mobile dashboard illustration" class="showcase-image float-y">
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-eyebrow">Our Services</span>
+      <h2>Complete banking solutions</h2>
+      <p>Everything you need to manage your money, grow your wealth, and achieve your financial goals — all in one place.</p>
+    </div>
+    <div class="services-grid">
+      <div class="service-card reveal-on-scroll">
+        <div class="service-icon"><img src="/images/icons/secure-banking.svg" alt="Bank account icon"></div>
+        <div style="flex:1;min-width:0;">
+          <h4>Everyday Bank Accounts</h4>
+          <p>Fee-free everyday accounts with unlimited free transactions, Apple Pay, Google Pay, and Samsung Pay built-in.</p>
+          <a href="/auth/register" class="service-link">Open Account →</a>
+        </div>
+      </div>
+      <div class="service-card reveal-on-scroll">
+        <div class="service-icon"><img src="/images/icons/mobile-banking.svg" alt="Cards icon"></div>
+        <div style="flex:1;min-width:0;">
+          <h4>Credit & Debit Cards</h4>
+          <p>From low-rate debit cards to platinum rewards credit cards with travel insurance and lounge access benefits.</p>
+          <a href="/services" class="service-link">View Cards →</a>
+        </div>
+      </div>
+      <div class="service-card reveal-on-scroll">
+        <div class="service-icon"><img src="/images/icons/rates-growth.svg" alt="Home loan icon"></div>
+        <div style="flex:1;min-width:0;">
+          <h4>Home Loans</h4>
+          <p>First home buyer? Investor? Refinancer? We've got competitive rates and expert mortgage brokers ready.</p>
+          <a href="/services" class="service-link">Compare Rates →</a>
+        </div>
+      </div>
+      <div class="service-card reveal-on-scroll">
+        <div class="service-icon"><img src="/images/icons/support-team.svg" alt="Personal loan icon"></div>
+        <div style="flex:1;min-width:0;">
+          <h4>Personal Loans</h4>
+          <p>Borrow from $2,000 to $50,000 for anything — travel, weddings, renovations, or debt consolidation.</p>
+          <a href="/services" class="service-link">Calculate Repayments →</a>
+        </div>
+      </div>
+      <div class="service-card reveal-on-scroll">
+        <div class="service-icon"><img src="/images/icons/global-banking.svg" alt="International transfer icon"></div>
+        <div style="flex:1;min-width:0;">
+          <h4>International Transfers</h4>
+          <p>Send money overseas to over 100 countries with competitive exchange rates and low flat fees from $25.</p>
+          <a href="/services" class="service-link">Send Money Now →</a>
+        </div>
+      </div>
+      <div class="service-card reveal-on-scroll">
+        <div class="service-icon"><img src="/images/icons/instant-transfer.svg" alt="Business banking icon"></div>
+        <div style="flex:1;min-width:0;">
+          <h4>Business Banking</h4>
+          <p>Complete business banking with transaction accounts, merchant facilities, business loans, and tax tools.</p>
+          <a href="/services" class="service-link">Business Solutions →</a>
+        </div>
+      </div>
+      <div class="service-card reveal-on-scroll">
+        <div class="service-icon"><img src="/images/icons/rates-growth.svg" alt="Term deposit icon"></div>
+        <div style="flex:1;min-width:0;">
+          <h4>Term Deposits</h4>
+          <p>Lock in guaranteed returns with Australia's best term deposit rates — from 3 months to 5 year terms.</p>
+          <a href="/services" class="service-link">See Rates →</a>
+        </div>
+      </div>
+      <div class="service-card reveal-on-scroll">
+        <div class="service-icon"><img src="/images/icons/secure-banking.svg" alt="Bill pay icon"></div>
+        <div style="flex:1;min-width:0;">
+          <h4>Bill Payments (BPAY)</h4>
+          <p>Pay over 45,000+ Australian billers with BPAY. Schedule recurring payments and never miss a due date.</p>
+          <a href="/services" class="service-link">Learn More →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section testimonial-section">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-eyebrow">Customer Stories</span>
+      <h2>Loved by thousands of Australians</h2>
+      <p>Real stories from real United Credit Bank customers who transformed their financial future with us.</p>
+    </div>
+    <div class="testimonials-grid">
+      <div class="testimonial">
+        <div class="testimonial-quote">"</div>
+        <p class="testimonial-text">Switching to United Credit Bank was the best financial decision I've made. Their mobile app is so intuitive, I feel like my bank actually understands me. The savings rates are unbeatable!</p>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">SC</div>
+          <div>
+            <div class="testimonial-name">Sarah Chen</div>
+            <div class="testimonial-loc">Melbourne, VIC</div>
+          </div>
+        </div>
+      </div>
+      <div class="testimonial">
+        <div class="testimonial-quote">"</div>
+        <p class="testimonial-text">As a small business owner, I need a bank that moves fast. United Credit Bank approved my $150K business loan in 48 hours and their international transfer fees saved me thousands last year.</p>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">MT</div>
+          <div>
+            <div class="testimonial-name">Marcus Thompson</div>
+            <div class="testimonial-loc">Brisbane, QLD</div>
+          </div>
+        </div>
+      </div>
+      <div class="testimonial">
+        <div class="testimonial-quote">"</div>
+        <p class="testimonial-text">First home buyer dream! Their mortgage brokers walked us through every step, and secured us a rate 0.5% lower than the big four. We saved over $200/month on repayments. 10/10.</p>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">JA</div>
+          <div>
+            <div class="testimonial-name">James & Amelia R.</div>
+            <div class="testimonial-loc">Sydney, NSW</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="cta-section">
+  <div class="container">
+    <div class="cta-box">
+      <h2>Ready to bank better? Start today, free.</h2>
+      <p>Join over 250,000 Australians who've already made the switch to United Credit Bank. Open your free account in under 2 minutes.</p>
+      <a href="/auth/register" class="btn btn-light btn-lg">🏦 Open Free Account Now</a>
+    </div>
+  </div>
+</section>
+
+<%- include('partials/layouts/main-end', { pageScripts }) -%>
+

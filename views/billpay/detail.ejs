@@ -1,0 +1,110 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/billpay" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← Bills Hub</a>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">📄 Payment Details #<%= String(bill.id).padStart(6, '0') %></h3>
+      <span class="status-badge status-<%= bill.status %>"><%= bill.status.toUpperCase() %></span>
+    </div>
+    <div class="card-body">
+      <div style="text-align:center;padding:16px 0 24px;">
+        <div style="width:72px;height:72px;border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:2rem;
+          background:<%= bill.status === 'completed' ? 'var(--success-light)' : bill.status === 'rejected' ? 'var(--danger-light)' : 'var(--warning-light)' %>;">
+          <%= bill.status === 'completed' ? '✅' : bill.status === 'rejected' ? '❌' : bill.status === 'scheduled' ? '📅' : '⏳' %>
+        </div>
+        <div style="font-size:2.2rem;font-weight:800;color:var(--danger);">-<%= currency(bill.amount) %></div>
+        <div style="color:var(--text-light);font-size:0.9rem;margin-top:4px;">
+          <%= moment(bill.due_date || bill.paid_at || bill.created_at).format('dddd, DD MMMM YYYY') %>
+        </div>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:8px 0 20px;">
+
+      <div style="display:grid;gap:10px;">
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Payment Type</span>
+          <strong>BPAY® Payment</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Biller</span>
+          <strong><%= bill.biller_name || '—' %></strong>
+        </div>
+        <% if (bill.biller_code) { %>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Biller Code</span>
+          <strong style="font-family:monospace;"><%= bill.biller_code %></strong>
+        </div>
+        <% } %>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Customer Ref</span>
+          <strong style="font-family:monospace;"><%= bill.customer_ref || '—' %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Description</span>
+          <strong><%= bill.description || '—' %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-gray);">Frequency</span>
+          <strong><%= bill.frequency || 'One-off' %></strong>
+        </div>
+      </div>
+
+      <% if (bill.status === 'pending' || bill.status === 'scheduled') { %>
+        <div style="margin-top:20px;">
+          <form method="POST" action="/billpay/<%= bill.id %>/cancel" onsubmit="return confirm('Cancel this payment?');">
+            <button class="btn btn-danger btn-block btn-lg">❌ Cancel Payment</button>
+          </form>
+        </div>
+      <% } %>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">📊 Timeline</h3></div>
+      <div class="card-body">
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="timeline-time"><%= moment(bill.created_at).format('DD MMM, HH:mm') %></div>
+            <div class="timeline-title">📝 Payment Initiated</div>
+            <div class="timeline-desc">BPAY payment created by you.</div>
+          </div>
+          <% if (bill.status === 'pending') { %>
+            <div class="timeline-item">
+              <div class="timeline-time">Awaiting approval</div>
+              <div class="timeline-title">⏳ Under Review</div>
+              <div class="timeline-desc">Large payment requires admin approval.</div>
+            </div>
+          <% } else if (bill.status === 'scheduled') { %>
+            <div class="timeline-item">
+              <div class="timeline-time"><%= moment(bill.due_date || bill.scheduled_date).format('DD MMM, 02:00') %></div>
+              <div class="timeline-title">📅 Scheduled</div>
+              <div class="timeline-desc">Payment will be processed on the scheduled date.</div>
+            </div>
+          <% } else if (bill.status === 'completed') { %>
+            <div class="timeline-item" style="border:none;">
+              <div class="timeline-time"><%= moment(bill.paid_at || bill.completed_at || bill.created_at).format('DD MMM, HH:mm') %></div>
+              <div class="timeline-title">✅ Completed</div>
+              <div class="timeline-desc">BPAY payment processed successfully.</div>
+            </div>
+          <% } %>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">💡 More Actions</h3></div>
+      <div class="card-body" style="display:flex;flex-direction:column;gap:8px;">
+        <a href="/billpay/pay?biller=<%= encodeURIComponent(bill.biller_name || '') %>&code=<%= bill.biller_code || '' %>" class="btn btn-outline btn-block">🔁 Pay This Biller Again</a>
+        <a href="/transfers/history" class="btn btn-light btn-block">📋 View All Transactions</a>
+        <a href="/user/support" class="btn btn-light btn-block">💬 Query This Payment</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/layouts/user-end') -%>
+
+

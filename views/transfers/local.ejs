@@ -1,0 +1,172 @@
+<% const pageScripts = ['/js/transfers.js']; %>
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/transfers" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← All Transfers</a>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">🇦🇺 Local Transfer (NPP / Osko)</h3></div>
+    <div class="card-body">
+      <% if (!hasTransferPin) { %>
+        <div class="alert alert-warning">
+          <span class="alert-icon">🔐</span>
+          <div class="alert-content">
+            <div class="alert-title">Create Your Transfer PIN First</div>
+            <p class="alert-message">Local and international transfers require a transfer PIN. Set it up in <a href="/user/settings">Settings</a> before sending funds.</p>
+          </div>
+        </div>
+      <% } %>
+      <form method="POST" action="/transfers/local" id="localTransferForm">
+        <div class="form-group">
+          <label class="form-label">From Account *</label>
+          <select name="from_account" required class="form-select">
+            <% accounts.forEach(acc => { %>
+              <option value="<%= acc.id %>" data-balance="<%= acc.available_balance %>" <%= (typeof selectedAccountId !== 'undefined' && selectedAccountId === acc.id) ? 'selected' : '' %>>
+                <%= acc.account_type %> • BSB <%= acc.bsb %> • Available: <%= currency(acc.available_balance) %>
+              </option>
+            <% }) %>
+          </select>
+        </div>
+
+        <% if (beneficiaries && beneficiaries.length > 0) { %>
+          <div class="form-group">
+            <label class="form-label">Select Saved Payee (optional)</label>
+            <select class="form-select" id="benSelect" onchange="fillBeneficiary()">
+              <option value="">Enter details manually...</option>
+              <% beneficiaries.forEach(b => { %>
+                <option value="<%= b.id %>" data-name="<%= b.name %>" data-account="<%= b.account_number %>" data-bsb="<%= b.bsb || '' %>">
+                  <%= b.name %> • <%= b.bsb || '—' %> / <%= b.account_number.slice(-4) %>
+                </option>
+              <% }) %>
+            </select>
+          </div>
+        <% } %>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Recipient Name *</label>
+            <input type="text" name="to_name" id="toName" required class="form-input" placeholder="e.g. Jane Smith">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Save as Beneficiary?</label>
+            <input type="text" name="beneficiary_name" class="form-input" placeholder="Leave blank to not save">
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">BSB *</label>
+            <input type="text" name="to_bsb" id="toBsb" required class="form-input" placeholder="e.g. 082-987" maxlength="7">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Account Number *</label>
+            <input type="text" name="to_account" id="toAccount" required class="form-input" placeholder="Account number" maxlength="12">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Amount (AUD) *</label>
+          <div style="position:relative;">
+            <span style="position:absolute;left:16px;top:50%;transform:translateY(-50%);font-weight:600;color:var(--text-gray);">$</span>
+            <input type="number" name="amount" id="amount" required min="0.01" step="0.01" class="form-input" style="padding-left:32px;" placeholder="0.00">
+          </div>
+          <span class="form-hint">Available balance will be shown after selecting account. Over $10,000 incurs $15 fee; over $5,000 requires approval.</span>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Description (for you)</label>
+            <input type="text" name="description" class="form-input" placeholder="e.g. Dinner split">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Reference (for them)</label>
+            <input type="text" name="reference" class="form-input" placeholder="e.g. Invoice #123">
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+          <input type="checkbox" name="save_beneficiary" id="saveBen" class="form-checkbox" value="1">
+          <label for="saveBen" style="font-size:0.9rem;color:var(--text-gray);margin:0;">Save this recipient to my beneficiaries</label>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Transfer PIN *</label>
+          <input type="password" name="transfer_pin" required class="form-input" placeholder="Enter your 4 to 6 digit transfer PIN" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6">
+          <span class="form-hint">This PIN authorises the transfer and protects both local and international payments.</span>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg btn-block" id="submitBtn">✅ Review & Confirm Transfer</button>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">💳 Transfer Summary</h3></div>
+      <div class="card-body" id="summaryBox">
+        <div style="color:var(--text-light);text-align:center;padding:20px;">Enter transfer details to see summary</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">ℹ️ Limits & Fees</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div style="display:flex;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <span>Per transaction limit</span>
+          <strong>$10,000 (instant)</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <span>Daily limit</span>
+          <strong>$25,000</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <span>Fee (under $10K)</span>
+          <strong style="color:var(--success);">$0 Free</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <span>Fee ($10K+)</span>
+          <strong>$15.00</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:14px 20px;">
+          <span>Approval required</span>
+          <strong>Amounts ≥ $5,000</strong>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('amount').addEventListener('input', updateSummary);
+document.getElementById('toName').addEventListener('input', updateSummary);
+
+function updateSummary() {
+  const amt = parseFloat(document.getElementById('amount').value) || 0;
+  const name = document.getElementById('toName').value || '—';
+  const fee = amt > 10000 ? 15 : 0;
+  const needsApproval = amt >= 5000;
+  const total = amt + fee;
+  document.getElementById('summaryBox').innerHTML = `
+    <div style="padding:4px 0 16px;border-bottom:1px solid var(--border);margin-bottom:16px;">
+      <div style="font-size:0.8rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">Sending to</div>
+      <div style="font-weight:700;font-size:1.1rem;">${name}</div>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;">
+      <span style="color:var(--text-gray);">Transfer Amount</span>
+      <strong>A$${amt.toLocaleString('en-AU', {minimumFractionDigits: 2})}</strong>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;">
+      <span style="color:var(--text-gray);">Transfer Fee</span>
+      <strong>${fee === 0 ? '<span style=\'color:var(--success)\'>$0.00 Free</span>' : 'A$' + fee.toFixed(2)}</strong>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:14px 0 4px;border-top:2px solid var(--border);margin-top:8px;">
+      <span style="font-weight:700;font-size:1.05rem;">Total</span>
+      <strong style="font-size:1.3rem;color:var(--primary);">A$${total.toLocaleString('en-AU', {minimumFractionDigits: 2})}</strong>
+    </div>
+    ${needsApproval ? `<div class="alert alert-warning" style="margin-top:16px;margin-bottom:0;"><span class="alert-icon">⏳</span><div class="alert-content"><div class="alert-title">Admin Approval Required</div><p class="alert-message" style="margin:0;">Amounts over $5,000 are reviewed by our team. Typically processed within 4 business hours.</p></div></div>` : `<div class="alert alert-success" style="margin-top:16px;margin-bottom:0;"><span class="alert-icon">⚡</span><div class="alert-content"><div class="alert-title">Instant Transfer</div><p class="alert-message" style="margin:0;">Funds will arrive instantly via NPP/Osko, 24/7 including weekends.</p></div></div>`}
+  `;
+}
+</script>
+
+<%- include('../partials/layouts/user-end', { pageScripts }) -%>
+

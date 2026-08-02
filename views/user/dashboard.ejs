@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#C8102E">
+  <title><%= title %></title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23C8102E'/><text x='50' y='62' font-size='48' font-family='Arial' font-weight='800' text-anchor='middle' fill='white'>U</text></svg>">
+</head>
+<body>
+  <div class="layout">
+    <%- include('../partials/sidebar-user') %>
+    <div class="main">
+      <%- include('../partials/topbar') %>
+      <div class="content">
+        <% if (!kyc || kyc.status !== 'approved') { %>
+          <div class="alert alert-warning">
+            <span class="alert-icon">🆔</span>
+            <div class="alert-content">
+              <div class="alert-title">Complete Your Identity Verification</div>
+              <p class="alert-message"><%= kyc && kyc.status === 'pending' ? 'Your KYC is being reviewed. Once approved you\'ll unlock cards, loans, and higher limits.' : 'Verify your identity now to access all banking features including cards, loans, and higher transaction limits.' %></p>
+              <% if (!kyc || kyc.status === 'rejected') { %>
+                <a href="/kyc/submit" class="btn btn-warning btn-sm" style="margin-top:8px;">Complete KYC Now</a>
+              <% } %>
+            </div>
+          </div>
+        <% } %>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+          <div class="stat-header">
+            <div>
+              <div class="stat-label">Total Balance</div>
+              <div class="stat-value"><%= currency(totalBalance) %></div>
+            </div>
+            <div class="stat-icon stat-icon-primary">💰</div>
+          </div>
+          <div class="stat-change up">↑ Across <%= accounts.length %> accounts</div>
+        </div>
+          <div class="stat-card">
+          <div class="stat-header">
+            <div>
+              <div class="stat-label">Credit Available</div>
+              <div class="stat-value"><%= currency(totalCredit || 0) %></div>
+            </div>
+            <div class="stat-icon stat-icon-success">💳</div>
+          </div>
+          <div class="stat-change"><%= cards.length %> active card<%= cards.length !== 1 ? 's' : '' %></div>
+        </div>
+          <div class="stat-card">
+          <div class="stat-header">
+            <div>
+              <div class="stat-label">Pending Approvals</div>
+              <div class="stat-value" style="color:var(--warning);"><%= pendingTransfers + pendingLoans %></div>
+            </div>
+            <div class="stat-icon stat-icon-warning">⏳</div>
+          </div>
+          <div class="stat-change">Transfers & Loans pending</div>
+        </div>
+          <div class="stat-card">
+          <div class="stat-header">
+            <div>
+              <div class="stat-label">Active Loans</div>
+              <div class="stat-value"><%= loans.length %></div>
+            </div>
+            <div class="stat-icon stat-icon-info">📑</div>
+          </div>
+          <div class="stat-change">
+            <% const loanTotal = loans.filter(l => l.status === 'disbursed' || l.status === 'active').reduce((s,l) => s + parseFloat(l.remaining_balance || l.loan_amount), 0); %>
+            <%= loanTotal > 0 ? currency(loanTotal) + ' balance' : 'No active balance' %>
+          </div>
+        </div>
+        </div>
+
+        <div class="quick-actions">
+          <a href="/transfers/local" class="quick-action">
+            <div class="quick-action-icon">↔️</div>
+            <span class="quick-action-label">Local Transfer</span>
+          </a>
+          <a href="/transfers/international" class="quick-action">
+            <div class="quick-action-icon">🌍</div>
+            <span class="quick-action-label">International</span>
+          </a>
+          <a href="/billpay/pay" class="quick-action">
+            <div class="quick-action-icon">📄</div>
+            <span class="quick-action-label">Pay a Bill</span>
+          </a>
+          <a href="/cards/apply" class="quick-action">
+            <div class="quick-action-icon">💳</div>
+            <span class="quick-action-label">Apply Card</span>
+          </a>
+          <a href="/billpay/deposit/new" class="quick-action">
+            <div class="quick-action-icon">⬇️</div>
+            <span class="quick-action-label">Deposit</span>
+          </a>
+          <a href="/billpay/withdraw/new" class="quick-action">
+            <div class="quick-action-icon">⬆️</div>
+            <span class="quick-action-label">Withdraw</span>
+          </a>
+          <a href="/loans/apply" class="quick-action">
+            <div class="quick-action-icon">🏦</div>
+            <span class="quick-action-label">Apply Loan</span>
+          </a>
+          <a href="/accounts/open/new" class="quick-action">
+            <div class="quick-action-icon">📁</div>
+            <span class="quick-action-label">New Account</span>
+          </a>
+        </div>
+
+        <div class="grid-2-1">
+          <div>
+            <div class="card">
+              <div class="card-header">
+              <h3 class="card-title">My Accounts</h3>
+              <a href="/accounts" class="btn btn-outline btn-sm">View All</a>
+            </div>
+            <div class="card-body" style="padding:16px;">
+              <% if (accounts.length === 0) { %>
+                <div class="empty-state">
+                  <div class="empty-state-icon">🏦</div>
+                  <h4>No accounts yet</h4>
+                  <p>Open your first account to get started.</p>
+                </div>
+              <% } %>
+              <% accounts.forEach(acc => { %>
+                <div class="account-card" style="margin-bottom:0;border:none;padding:20px;border-radius:var(--radius-lg);margin-bottom:12px;">
+                  <div class="account-card-header">
+                    <div class="account-type">
+                      <div class="account-type-icon">💳</div>
+                      <div>
+                        <div class="account-name"><%= acc.account_type %></div>
+                        <div class="account-number">BSB <%= acc.bsb %> • <%= acc.account_number.slice(acc.account_number.length - 4) %></div>
+                      </div>
+                    </div>
+                    <div class="account-balance">
+                      <div class="account-balance-label">Available</div>
+                      <div class="account-balance-value"><%= currency(acc.available_balance) %></div>
+                      <div style="font-size:0.8rem;color:var(--text-light);text-align:right;">Balance: <%= currency(acc.balance) %></div>
+                    </div>
+                  </div>
+                  <div class="account-actions">
+                    <a href="/accounts/<%= acc.id %>" class="btn btn-light btn-sm">Details</a>
+                    <a href="/transfers/local?from=<%= acc.id %>" class="btn btn-outline btn-sm">Transfer</a>
+                    <a href="/user/statements?account=<%= acc.id %>" class="btn btn-light btn-sm">Statement</a>
+                  </div>
+                </div>
+              <% }) %>
+            </div>
+          </div>
+
+            <div style="margin-top:20px;" class="card">
+              <div class="card-header">
+                <h3 class="card-title">Recent Transactions</h3>
+                <a href="/transfers/history" class="btn btn-outline btn-sm">View All</a>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <% if (transactions.length === 0) { %>
+                  <div class="empty-state">
+                    <div class="empty-state-icon">📋</div>
+                    <h4>No transactions yet</h4>
+                    <p>Your recent transactions will show up here.</p>
+                  </div>
+                <% } else { %>
+                  <div class="table-wrap">
+                    <table class="table">
+                      <tbody>
+                        <% transactions.slice(0, 8).forEach(tx => { 
+                          const isOut = !['deposit', 'loan_disbursement'].includes(tx.transaction_type);
+                          const displayType = tx.transaction_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                        %>
+                          <tr>
+                            <td style="width:44px;padding-right:0;">
+                              <div style="width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:<%= isOut ? 'var(--danger-light)' : 'var(--success-light)' %>;color:<%= isOut ? 'var(--danger)' : 'var(--success)' %>;font-size:1.1rem;">
+                                <%= isOut ? '➖' : '➕' %>
+                              </div>
+                            </td>
+                            <td>
+                              <div style="font-weight:600;font-size:0.9rem;"><%= tx.recipient_name || tx.description || displayType %></div>
+                              <div style="font-size:0.78rem;color:var(--text-light);"><%= displayType %></div>
+                            </td>
+                            <td style="text-align:right;">
+                              <div style="font-weight:700;font-size:0.95rem;color:<%= isOut ? 'var(--danger)' : 'var(--success)' %>;">
+                                <%= isOut ? '-' : '+' %><%= currency(tx.amount) %>
+                              </div>
+                              <span class="status-badge status-<%= tx.status %>" style="margin-left:auto;"><%= tx.status %></span>
+                            </td>
+                          </tr>
+                        <% }) %>
+                      </tbody>
+                    </table>
+                  </div>
+                <% } %>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <% if (cards.length > 0) { %>
+              <div class="card" style="margin-bottom:20px;">
+                <div class="card-header">
+                  <h3 class="card-title">My Card</h3>
+                  <a href="/cards" class="btn btn-outline btn-sm">Manage</a>
+                </div>
+                <div class="card-body">
+                  <% 
+                    const card = cards.find(c => ['active', 'approved'].includes(c.status)) || cards[0];
+                  %>
+                  <div class="card-visual" style="margin:0 auto 16px;">
+                    <div class="card-visual-type">
+                      <div class="card-brand">UCB</div>
+                      <span class="card-type-label"><%= card.card_type %></span>
+                    </div>
+                    <div class="card-visual-chip"></div>
+                    <div class="card-visual-number">
+                      <% 
+                        const cn = card.card_number; 
+                        const masked = cn.slice(0,4) + ' ' + '•••• ' + '•••• ' + cn.slice(-4);
+                      %>
+                      <%= masked %>
+                    </div>
+                    <div class="card-visual-footer">
+                      <div>
+                        <div class="card-field-label">Holder</div>
+                        <div class="card-field-value"><%= card.cardholder_name %></div>
+                      </div>
+                      <div>
+                        <div class="card-field-label">Exp</div>
+                        <div class="card-field-value"><%= card.expiry_date %></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div style="text-align:center;">
+                    <span class="status-badge status-<%= card.status %>"><%= card.status %></span>
+                    <div style="margin-top:10px;font-size:0.85rem;color:var(--text-gray);">
+                      Daily limit: <%= currency(card.daily_limit) %>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            <% } else { %>
+              <div class="card" style="margin-bottom:20px;">
+                <div class="card-header"><h3 class="card-title">💳 Get Your Card</h3></div>
+                <div class="card-body" style="text-align:center;">
+                  <div style="font-size:3rem;margin-bottom:12px;">💳</div>
+                  <h4 style="margin-bottom:8px;">No cards yet</h4>
+                  <p style="margin-bottom:16px;">Apply for a debit or credit card in minutes.</p>
+                  <a href="/cards/apply" class="btn btn-primary btn-block">Apply for Card</a>
+                </div>
+              </div>
+            <% } %>
+
+            <div class="card" style="margin-bottom:20px;">
+              <div class="card-header"><h3 class="card-title">🔔 Notifications</h3></div>
+              <div class="card-body" style="padding:0;max-height:360px;overflow-y:auto;">
+                <% if (notifications.length === 0) { %>
+                  <div class="empty-state" style="padding:32px 16px;">
+                    <div class="empty-state-icon" style="width:56px;height:56px;font-size:1.4rem;">🔔</div>
+                    <h4 style="font-size:1rem;">All caught up!</h4>
+                    <p style="font-size:0.85rem;">No new notifications.</p>
+                  </div>
+                <% } %>
+                <% notifications.forEach(n => { %>
+                  <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start;">
+                    <div style="width:36px;height:36px;border-radius:50%;background:var(--bg-gray);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1rem;">
+                      <%= n.type === 'success' ? '✅' : n.type === 'warning' ? '⚠️' : n.type === 'error' ? '❌' : 'ℹ️' %>
+                    </div>
+                    <div style="min-width:0;flex:1;">
+                      <div style="font-weight:600;font-size:0.9rem;margin-bottom:2px;"><%= n.title %></div>
+                      <div style="font-size:0.82rem;color:var(--text-gray);margin-bottom:4px;"><%= n.message %></div>
+                      <div style="font-size:0.7rem;color:var(--text-light);"><%= moment(n.created_at).fromNow() %></div>
+                    </div>
+                  </div>
+                <% }) %>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><h3 class="card-title">🇦🇺 Need Help?</h3></div>
+              <div class="card-body">
+                <div style="padding:14px;background:var(--primary-alpha);border-radius:var(--radius);margin-bottom:12px;">
+                  <div style="font-weight:600;font-size:0.9rem;color:var(--primary);">📞 1300 UCBANK</div>
+                  <div style="font-size:0.8rem;color:var(--text-gray);">Mon-Fri 8am-8pm AEST</div>
+                </div>
+                <a href="/user/support" class="btn btn-outline btn-block">Contact Support</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <% if (typeof error !== 'undefined' && error) { %>
+    <div id="toast-error" class="alert alert-danger" style="position:fixed;top:20px;right:20px;z-index:9999;max-width:400px;box-shadow:0 10px 30px rgba(0,0,0,0.15);">
+      <span class="alert-icon">⚠️</span>
+      <div class="alert-content">
+        <div class="alert-title">Error</div>
+        <p class="alert-message"><%= error %></p>
+      </div>
+    </div>
+  <% } %>
+  <% if (typeof success !== 'undefined' && success) { %>
+    <div id="toast-success" class="alert alert-success" style="position:fixed;top:20px;right:20px;z-index:9999;max-width:400px;box-shadow:0 10px 30px rgba(0,0,0,0.15);">
+      <span class="alert-icon">✓</span>
+      <div class="alert-content">
+        <div class="alert-title">Success</div>
+        <p class="alert-message"><%= success %></p>
+      </div>
+    </div>
+  <% } %>
+
+  <script src="/js/common.js"></script>
+  <script src="/js/user-dashboard.js"></script>
+</body>
+</html>
+

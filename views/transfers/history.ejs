@@ -1,0 +1,119 @@
+<% const pageScripts = ['/js/transfers.js']; %>
+<%- include('../partials/layouts/user-start') -%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+  <div>
+    <h2 style="margin:0;">📋 Transfer History</h2>
+    <p style="margin:4px 0 0;color:var(--text-gray);">All your past transfers, deposits, and withdrawals.</p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a href="/transfers/local" class="btn btn-primary">➕ New Transfer</a>
+    <button class="btn btn-outline btn-sm">⬇️ Export CSV</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="filter-bar">
+    <div class="filter-group">
+      <span class="filter-label">Search</span>
+      <input type="text" class="form-input" id="searchInput" placeholder="Name, reference, amount...">
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Type</span>
+      <select class="form-select" id="typeFilter">
+        <option value="">All Types</option>
+        <option value="local_transfer">🇦🇺 Local Transfer</option>
+        <option value="international_transfer">🌍 International</option>
+        <option value="deposit">⬇️ Deposit</option>
+        <option value="withdrawal">⬆️ Withdrawal</option>
+        <option value="bill_payment">📄 Bill Payment</option>
+        <option value="loan_payment">💳 Loan Payment</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Status</span>
+      <select class="form-select" id="statusFilter">
+        <option value="">All</option>
+        <option>completed</option>
+        <option>pending</option>
+        <option>approved</option>
+        <option>rejected</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">From</span>
+      <input type="date" class="form-input" id="fromDate">
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">To</span>
+      <input type="date" class="form-input" id="toDate">
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="applyFilters()">🔍 Filter</button>
+  </div>
+
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Reference</th>
+          <th style="text-align:right;">Amount (AUD)</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (transactions.length === 0) { %>
+          <tr><td colspan="7"><div class="empty-state" style="padding:48px 20px;"><div class="empty-state-icon">📋</div><h4>No transactions found</h4><p>Your transaction history will appear here.</p></div></td></tr>
+        <% } %>
+        <% transactions.forEach(tx => { 
+          const isOut = ['withdrawal','local_transfer','international_transfer','bill_payment','loan_payment','admin_adjustment'].includes(tx.transaction_type) && parseFloat(tx.amount) < 0 || ['withdrawal','local_transfer','international_transfer','bill_payment','loan_payment'].includes(tx.transaction_type);
+          const amt = Math.abs(parseFloat(tx.amount));
+          const displayType = tx.transaction_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+          const typeIcon = tx.transaction_type.includes('international') ? '🌍' : tx.transaction_type.includes('local') ? '🇦🇺' : tx.transaction_type === 'deposit' ? '⬇️' : tx.transaction_type === 'withdrawal' ? '⬆️' : tx.transaction_type === 'bill_payment' ? '📄' : tx.transaction_type === 'loan_payment' ? '💳' : tx.transaction_type === 'loan_disbursement' ? '💸' : '💰';
+        %>
+          <tr class="tx-row" style="cursor:pointer;" onclick="location.href='/transfers/<%= tx.id %>'">
+            <td><%= moment(tx.created_at).format('DD MMM YYYY HH:mm') %></td>
+            <td>
+              <span style="font-size:1rem;margin-right:6px;"><%= typeIcon %></span>
+              <span style="font-weight:600;font-size:0.85rem;"><%= displayType %></span>
+            </td>
+            <td>
+              <div style="font-weight:600;font-size:0.9rem;"><%= tx.recipient_name || tx.description || '—' %></div>
+              <% if (tx.country) { %>
+                <div style="font-size:0.75rem;color:var(--text-light);">📍 <%= tx.country %></div>
+              <% } %>
+            </td>
+            <td style="font-family:monospace;font-size:0.82rem;color:var(--text-gray);"><%= tx.reference || '—' %></td>
+            <td style="text-align:right;">
+              <div style="font-weight:700;color:<%= isOut ? 'var(--danger)' : 'var(--success)' %>">
+                <%= isOut ? '-' : '+' %><%= currency(amt) %>
+              </div>
+              <% if (parseFloat(tx.fee) > 0) { %>
+                <div style="font-size:0.72rem;color:var(--text-light);">Fee: <%= currency(tx.fee) %></div>
+              <% } %>
+              <% if (tx.foreign_currency) { %>
+                <div style="font-size:0.72rem;color:var(--text-light);">FX: <%= tx.foreign_amount %> <%= tx.foreign_currency %></div>
+              <% } %>
+            </td>
+            <td><span class="status-badge status-<%= tx.status %>"><%= tx.status %></span></td>
+            <td onclick="event.stopPropagation();">
+              <a href="/transfers/<%= tx.id %>" class="btn btn-light btn-sm">View</a>
+              <% if (tx.status === 'pending') { %>
+                <form method="POST" action="/transfers/<%= tx.id %>/cancel" onsubmit="return confirm('Cancel this pending transfer?');" style="display:inline;">
+                  <button class="btn btn-danger btn-sm" type="submit">Cancel</button>
+                </form>
+              <% } %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/layouts/user-end', { pageScripts }) -%>
+
+

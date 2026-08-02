@@ -1,0 +1,135 @@
+<% const pageScripts = ['/js/transfers.js']; %>
+<%- include('../partials/layouts/user-start') -%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+  <div>
+    <h2 style="margin:0;">💱 Transfers & Payments</h2>
+    <p style="margin:4px 0 0;color:var(--text-gray);">Send money locally or overseas, and manage your transfer history.</p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a href="/transfers/local" class="btn btn-primary">🇦🇺 Local Transfer</a>
+    <a href="/transfers/international" class="btn btn-outline">🌍 International</a>
+    <a href="/transfers/history" class="btn btn-light">📋 History</a>
+  </div>
+</div>
+
+<div class="quick-actions">
+  <a href="/transfers/local" class="quick-action">
+    <div class="quick-action-icon">↔️</div>
+    <span class="quick-action-label">Australian Transfer</span>
+  </a>
+  <a href="/transfers/international" class="quick-action">
+    <div class="quick-action-icon">🌍</div>
+    <span class="quick-action-label">Overseas Transfer</span>
+  </a>
+  <a href="/billpay/pay" class="quick-action">
+    <div class="quick-action-icon">📄</div>
+    <span class="quick-action-label">BPAY / Bill</span>
+  </a>
+  <a href="/user/beneficiaries" class="quick-action">
+    <div class="quick-action-icon">👥</div>
+    <span class="quick-action-label">Beneficiaries</span>
+  </a>
+</div>
+
+<div class="grid-2-1">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">📋 Recent Transfers</h3>
+      <a href="/transfers/history" class="btn btn-outline btn-sm">View All</a>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>To / Description</th>
+            <th style="text-align:right;">Amount</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (recent.length === 0) { %>
+            <tr><td colspan="4"><div class="empty-state" style="padding:40px 20px;"><div class="empty-state-icon">💸</div><h4>No transfers yet</h4><p>Make your first transfer today — instant and fee-free for local payments.</p></div></td></tr>
+          <% } %>
+          <% recent.forEach(tx => { 
+            const displayType = tx.transaction_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+          %>
+            <tr style="cursor:pointer;" onclick="location.href='/transfers/<%= tx.id %>'">
+              <td><%= moment(tx.created_at).format('DD MMM YYYY HH:mm') %></td>
+              <td>
+                <div style="font-weight:600;font-size:0.9rem;"><%= tx.recipient_name || tx.description || displayType %></div>
+                <div style="font-size:0.78rem;color:var(--text-light);">
+                  <%= tx.transaction_type === 'international_transfer' ? '🌍 International • ' + (tx.country || '') : '🇦🇺 Local' %>
+                  <% if (tx.reference) { %> • Ref: <%= tx.reference %><% } %>
+                </div>
+              </td>
+              <td style="text-align:right;">
+                <div style="font-weight:700;color:var(--danger);">-<%= currency(tx.amount) %></div>
+                <% if (parseFloat(tx.fee) > 0) { %>
+                  <div style="font-size:0.75rem;color:var(--text-light);">Fee: <%= currency(tx.fee) %></div>
+                <% } %>
+              </td>
+              <td><span class="status-badge status-<%= tx.status %>"><%= tx.status %></span></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">💡 Transfer Info</h3></div>
+      <div class="card-body" style="padding:20px;">
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="timeline-time">Local Transfers</div>
+            <div class="timeline-title">🇦🇺 Instant & Fee-Free</div>
+            <div class="timeline-desc">NPP/Osko payments, 24/7 including weekends. $0 fees. Up to $25,000 per day.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-time">International</div>
+            <div class="timeline-title">🌍 1-3 Business Days</div>
+            <div class="timeline-desc">$25 flat fee. Competitive rates. 100+ countries, 50+ currencies.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-time">Large Transfers</div>
+            <div class="timeline-title">⏳ Over $5,000</div>
+            <div class="timeline-desc">Amounts over $5,000 require admin approval for your security. Usually approved within 4 business hours.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">👥 Saved Payees</h3></div>
+      <div class="card-body" style="padding:0;">
+        <% if (beneficiaries.length === 0) { %>
+          <div class="empty-state" style="padding:32px 16px;">
+            <div class="empty-state-icon" style="width:48px;height:48px;font-size:1.3rem;">👥</div>
+            <h4 style="font-size:1rem;">No saved payees</h4>
+            <p style="font-size:0.85rem;">Save frequent recipients for one-click transfers.</p>
+            <a href="/user/beneficiaries" class="btn btn-outline btn-sm" style="margin-top:8px;">Add Payee</a>
+          </div>
+        <% } %>
+        <% beneficiaries.slice(0, 5).forEach(b => { %>
+          <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:center;">
+            <div class="user-avatar" style="width:36px;height:36px;font-size:0.8rem;<%= b.is_international ? 'background:linear-gradient(135deg,#2563EB,#1E40AF);' : '' %>"><%= b.name.charAt(0) %></div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-weight:600;font-size:0.88rem;"><%= b.name %></div>
+              <div style="font-size:0.75rem;color:var(--text-light);">
+                <%= b.is_international ? '🌍 ' + (b.country || 'Overseas') : '🇦🇺 BSB ' + (b.bsb || '—') %>
+              </div>
+            </div>
+            <a href="<%= b.is_international ? '/transfers/international' : '/transfers/local' %>?beneficiary=<%= b.id %>" class="btn btn-primary btn-sm">↔️</a>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/layouts/user-end', { pageScripts }) -%>
+
+

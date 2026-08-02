@@ -1,0 +1,92 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/accounts" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← Back to Accounts</a>
+
+<div class="section-header" style="text-align:left;margin-bottom:28px;">
+  <span class="section-eyebrow">🏦 Open New Account</span>
+  <h2 style="font-size:2rem;margin:12px 0 8px;">Grow your money with a UCB account</h2>
+  <p style="margin:0;">Choose the account type that best suits your financial goals. All accounts opened instantly online.</p>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <form method="POST" action="/accounts/open">
+      <h3 style="margin-bottom:20px;">💼 Choose Your Account Type</h3>
+      <div style="display:grid;gap:16px;margin-bottom:28px;">
+        <% accountTypes.forEach((type, i) => { %>
+          <label style="display:block;cursor:pointer;border:2px solid <%= i === 0 ? 'var(--primary)' : 'var(--border)' %>;border-radius:var(--radius-lg);padding:20px;background:<%= i === 0 ? 'var(--primary-alpha)' : 'white' %>;transition:var(--transition);" class="account-type-option" onclick="selectType(this, '<%= type.type %>', <%= type.min %>)">
+            <input type="radio" name="account_type" value="<%= type.type %>" <%= i === 0 ? 'checked' : '' %> style="display:none;">
+            <div style="display:flex;gap:16px;align-items:flex-start;">
+              <div style="width:52px;height:52px;border-radius:var(--radius);background:var(--primary-alpha);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:1.6rem;flex-shrink:0;">
+                <% if (type.type.includes('High')) { %>🏆
+                <% } else if (type.type.includes('Term')) { %>🔒
+                <% } else if (type.type.includes('Business')) { %>🏢
+                <% } else if (type.type.includes('Multi') || type.type.includes('Intl')) { %>🌍
+                <% } else { %>💳<% } %>
+              </div>
+              <div style="flex:1;">
+                <div style="display:flex;justify-content:space-between;align-items:start;">
+                  <div>
+                    <h4 style="margin-bottom:4px;"><%= type.name %></h4>
+                    <p style="font-size:0.9rem;margin-bottom:8px;"><%= type.desc %></p>
+                  </div>
+                  <div style="text-align:right;">
+                    <div style="font-size:1.4rem;font-weight:800;color:var(--primary);"><%= type.interest %></div>
+                    <div style="font-size:0.75rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Interest p.a.</div>
+                  </div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <span class="tag">Min. $<%= type.min.toLocaleString() %> deposit</span>
+                  <span class="tag">🇦🇺 Australian Dollar</span>
+                  <span class="tag tag-verified">Government Guaranteed</span>
+                </div>
+              </div>
+            </div>
+          </label>
+        <% }) %>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:24px 0;">
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Initial Deposit Amount (AUD) *</label>
+          <input type="number" name="initial_deposit" id="initialDeposit" required min="0" step="0.01" value="100" class="form-input">
+          <span class="form-hint" id="minDepositHint">Minimum initial deposit: $0</span>
+        </div>
+      </div>
+
+      <div class="alert alert-info" style="margin-top:8px;">
+        <span class="alert-icon">ℹ️</span>
+        <div class="alert-content">
+          <div class="alert-title">What you'll get today</div>
+          <p class="alert-message" style="margin:0;">Your new account will be opened immediately. You'll receive your BSB and account number, and can start making transfers and payments straight away.</p>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px;margin-top:24px;justify-content:flex-end;">
+        <a href="/accounts" class="btn btn-light btn-lg">Cancel</a>
+        <button type="submit" class="btn btn-primary btn-lg">✅ Open Account Now</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function selectType(el, type, min) {
+  document.querySelectorAll('.account-type-option').forEach(opt => {
+    opt.style.borderColor = 'var(--border)';
+    opt.style.background = 'white';
+  });
+  el.style.borderColor = 'var(--primary)';
+  el.style.background = 'var(--primary-alpha)';
+  document.getElementById('initialDeposit').min = min;
+  document.getElementById('minDepositHint').textContent = 'Minimum initial deposit: $' + min.toLocaleString();
+  if (parseFloat(document.getElementById('initialDeposit').value) < min) {
+    document.getElementById('initialDeposit').value = min;
+  }
+}
+</script>
+
+<%- include('../partials/layouts/user-end') -%>
+

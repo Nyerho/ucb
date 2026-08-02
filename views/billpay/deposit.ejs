@@ -1,0 +1,124 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/billpay" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← Bills Hub</a>
+
+<div class="section-header" style="text-align:left;margin-bottom:24px;">
+  <span class="section-eyebrow">⬇️ Deposit Funds</span>
+  <h2 style="font-size:2rem;margin:12px 0 8px;">Add money to your account</h2>
+  <p style="margin:0;">Instant deposits available via card, transfer, or bank.</p>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">💳 Deposit Details</h3></div>
+    <div class="card-body">
+      <form method="POST" action="/billpay/deposit">
+        <div class="form-group">
+          <label class="form-label">To Account *</label>
+          <select name="account_id" required class="form-select">
+            <% accounts.forEach(acc => { %>
+              <option value="<%= acc.id %>"><%= acc.account_type %> • Current: <%= currency(acc.balance) %></option>
+            <% }) %>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Deposit Method *</label>
+          <select name="source" required class="form-select">
+            <option value="card">💳 Debit / Credit Card (Instant)</option>
+            <option value="bank_transfer">🏦 External Bank Transfer (1-2 days)</option>
+            <option value="cash_deposit">💵 Branch Cash Deposit</option>
+            <option value="cheque">📝 Cheque Deposit</option>
+            <option value="paypal">🅿️ PayPal / Wallet</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Deposit Amount (AUD) *</label>
+          <div style="position:relative;">
+            <span style="position:absolute;left:16px;top:50%;transform:translateY(-50%);font-weight:600;color:var(--text-gray);">$</span>
+            <input type="number" name="amount" id="depAmount" required min="1" step="0.01" value="500" class="form-input" style="padding-left:32px;">
+          </div>
+          <span class="form-hint">Deposits over $10,000 may require admin review for anti-money laundering compliance.</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Reference / Description</label>
+          <input type="text" name="reference" class="form-input" placeholder="e.g. Salary, savings transfer...">
+        </div>
+
+        <div class="alert alert-info" style="margin-bottom:20px;">
+          <span class="alert-icon">ℹ️</span>
+          <div class="alert-content">
+            <div class="alert-title">Processing Times</div>
+            <p class="alert-message" style="margin:0;font-size:0.85rem;">Card deposits are instant. Bank transfers take 1-2 business days. Cash deposits at branches are available same day.</p>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-success btn-lg btn-block">⬇️ Confirm Deposit</button>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">💰 Deposit Summary</h3></div>
+      <div class="card-body">
+        <div style="text-align:center;padding:12px 0 20px;border-bottom:1px solid var(--border);margin-bottom:16px;">
+          <div style="font-size:0.78rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Crediting</div>
+          <div style="font-size:2.5rem;font-weight:900;color:var(--success);">+$<span id="depAmtDisplay">500.00</span></div>
+          <div style="color:var(--text-gray);font-size:0.9rem;">Australian Dollars (AUD)</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:8px 0;">
+          <span style="color:var(--text-gray);">Deposit fee</span>
+          <strong style="color:var(--success);">$0.00 Free</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:12px 0 0;border-top:2px solid var(--border);margin-top:8px;font-weight:700;font-size:1.05rem;">
+          <span>Account will receive</span>
+          <strong style="color:var(--primary);">$<span id="depTotalDisplay">500.00</span></strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">⚡ Quick Amounts</h3></div>
+      <div class="card-body" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+        <button class="btn btn-light" onclick="document.getElementById('depAmount').value=100;udpate();">$100</button>
+        <button class="btn btn-light" onclick="document.getElementById('depAmount').value=500;udpate();">$500</button>
+        <button class="btn btn-light" onclick="document.getElementById('depAmount').value=1000;udpate();">$1K</button>
+        <button class="btn btn-light" onclick="document.getElementById('depAmount').value=2000;udpate();">$2K</button>
+        <button class="btn btn-light" onclick="document.getElementById('depAmount').value=5000;udpate();">$5K</button>
+        <button class="btn btn-light" onclick="document.getElementById('depAmount').value=10000;udpate();">$10K</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">🏦 Direct Deposit</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div style="padding:16px 20px;text-align:center;background:var(--bg-gray);border-radius:var(--radius);margin-bottom:12px;">
+          <div style="font-size:0.78rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Pay to BSB & Account</div>
+          <div style="font-family:monospace;font-weight:800;font-size:1.2rem;color:var(--primary);margin-top:4px;">
+            <% if (accounts[0]) { %>BSB <%= accounts[0].bsb %> • ACC <%= accounts[0].account_number %><% } %>
+          </div>
+          <div style="font-size:0.85rem;color:var(--text-gray);margin-top:4px;"><%= user.first_name %> <%= user.last_name %></div>
+        </div>
+        <div style="font-size:0.85rem;color:var(--text-gray);">
+          Transfer money from another bank to these BSB/account details. Include your name in the reference for faster processing.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function udpate() {
+  const amt = parseFloat(document.getElementById('depAmount').value) || 0;
+  document.getElementById('depAmtDisplay').textContent = amt.toLocaleString('en-AU', {minimumFractionDigits: 2});
+  document.getElementById('depTotalDisplay').textContent = amt.toLocaleString('en-AU', {minimumFractionDigits: 2});
+}
+document.getElementById('depAmount').addEventListener('input', udpate);
+</script>
+
+<%- include('../partials/layouts/user-end') -%>
+
+

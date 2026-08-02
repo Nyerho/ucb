@@ -1,0 +1,141 @@
+<%- include('../partials/layouts/admin-start') -%>
+
+<a href="/admin/accounts" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← All Accounts</a>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">🏦 Account #<%= String(account.id).padStart(6, '0') %></h3>
+      <span class="status-badge status-<%= account.status %>"><%= account.status %></span>
+    </div>
+    <div class="card-body">
+      <div class="stat-cards" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:20px;">
+        <div style="padding:16px;background:var(--primary-alpha);border-radius:var(--radius);">
+          <div style="font-size:0.72rem;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.05em;">Current Balance</div>
+          <div style="font-size:1.7rem;font-weight:900;color:var(--primary);margin-top:4px;"><%= currency(account.balance) %></div>
+        </div>
+        <div style="padding:16px;background:var(--success-light);border-radius:var(--radius);">
+          <div style="font-size:0.72rem;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.05em;">Available</div>
+          <div style="font-size:1.7rem;font-weight:900;color:var(--success);margin-top:4px;"><%= currency(account.available_balance) %></div>
+        </div>
+      </div>
+      <div style="display:grid;gap:10px;">
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Type</span><strong><%= account.account_type %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Owner</span><strong><a href="/admin/users/<%= account.user_id %>" style="color:var(--primary);"><%= account.user_name || 'User #' + account.user_id %></a></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">BSB • Number</span><strong style="font-family:monospace;">BSB <%= account.bsb %> • <%= account.account_number %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Name</span><strong><%= account.account_name %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Branch</span><strong><%= account.branch %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Interest Rate</span><strong style="color:var(--primary);"><%= parseFloat(account.interest_rate).toFixed(2) %>% p.a.</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:10px 0;">
+          <span style="color:var(--text-gray);">Opened</span><strong><%= moment(account.opened_date || account.created_at).format('DD MMM YYYY') %></strong>
+        </div>
+      </div>
+      <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;">
+        <form method="POST" action="/admin/accounts/<%= account.id %>/status" style="display:inline;">
+          <select name="status" onchange="this.form.submit()" class="form-select">
+            <option value="active" <%= account.status === 'active' ? 'selected' : '' %>>active</option>
+            <option value="frozen" <%= account.status === 'frozen' ? 'selected' : '' %>>frozen</option>
+            <option value="closed" <%= account.status === 'closed' ? 'selected' : '' %>>closed</option>
+          </select>
+        </form>
+        <button class="btn btn-primary" onclick="document.getElementById('editAccountModal').classList.add('active')">✏️ Edit Account</button>
+        <button class="btn btn-outline" onclick="document.getElementById('adj2').classList.add('active')">💰 Adjust Balance</button>
+        <a href="/admin/transactions/new?account_id=<%= account.id %>" class="btn btn-light">➕ Add Transaction</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">📋 Transactions (100 latest)</h3></div>
+    <div class="table-wrap" style="max-height:720px;overflow:auto;">
+      <table class="table">
+        <thead><tr><th>Date</th><th>Type</th><th style="text-align:right;">Amount</th><th>Status</th></tr></thead>
+        <tbody>
+          <% (transactions||[]).forEach(tx => { %>
+            <tr><td style="font-size:0.82rem;"><%= moment(tx.created_at).format('DD MMM HH:mm') %></td>
+            <td><div style="font-size:0.85rem;"><%= (tx.recipient_name || tx.description || tx.transaction_type.replace(/_/g,' ')).slice(0,25) %></div>
+              <div style="font-size:0.7rem;color:var(--text-light);"><%= tx.transaction_type.replace(/_/g,' ') %></div></td>
+            <td style="text-align:right;font-weight:700;color:<%= parseFloat(tx.amount)<0?'var(--danger)':'var(--success)' %>;"><%= currency(tx.amount) %></td>
+            <td>
+              <span class="status-badge status-<%= tx.status %>" style="font-size:0.65rem;"><%= tx.status %></span>
+              <a href="/admin/transactions/<%= tx.id %>" class="btn btn-light btn-sm" style="margin-left:8px;">Edit</a>
+            </td></tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="editAccountModal"><div class="modal-dialog" style="max-width:640px;">
+  <div class="modal-header"><h3 class="modal-title">✏️ Edit Account</h3>
+  <button class="modal-close" onclick="document.getElementById('editAccountModal').classList.remove('active')">✕</button></div>
+  <form method="POST" action="/admin/accounts/<%= account.id %>/update">
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Account Type</label><input type="text" name="account_type" class="form-input" value="<%= account.account_type %>"></div>
+        <div class="form-group"><label class="form-label">Account Name</label><input type="text" name="account_name" class="form-input" value="<%= account.account_name %>"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Account Number</label><input type="text" name="account_number" class="form-input" value="<%= account.account_number %>"></div>
+        <div class="form-group"><label class="form-label">BSB</label><input type="text" name="bsb" class="form-input" value="<%= account.bsb %>"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Currency</label><input type="text" name="currency" class="form-input" value="<%= account.currency || 'AUD' %>"></div>
+        <div class="form-group"><label class="form-label">Branch</label><input type="text" name="branch" class="form-input" value="<%= account.branch || '' %>"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Balance</label><input type="number" step="0.01" name="balance" class="form-input" value="<%= account.balance %>"></div>
+        <div class="form-group"><label class="form-label">Available Balance</label><input type="number" step="0.01" name="available_balance" class="form-input" value="<%= account.available_balance %>"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Interest Rate</label><input type="number" step="0.01" name="interest_rate" class="form-input" value="<%= account.interest_rate %>"></div>
+        <div class="form-group"><label class="form-label">Status</label>
+          <select name="status" class="form-select">
+            <option value="active" <%= account.status === 'active' ? 'selected' : '' %>>active</option>
+            <option value="frozen" <%= account.status === 'frozen' ? 'selected' : '' %>>frozen</option>
+            <option value="closed" <%= account.status === 'closed' ? 'selected' : '' %>>closed</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-light" onclick="document.getElementById('editAccountModal').classList.remove('active')">Cancel</button>
+      <button type="submit" class="btn btn-primary">💾 Save Account</button>
+    </div>
+  </form>
+</div></div>
+
+<div class="modal" id="adj2"><div class="modal-dialog">
+  <div class="modal-header"><h3 class="modal-title">💰 Adjust #<%= String(account.id).padStart(6,'0') %></h3>
+  <button class="modal-close" onclick="document.getElementById('adj2').classList.remove('active')">✕</button></div>
+  <form method="POST" action="/admin/accounts/adjust">
+    <div class="modal-body">
+      <input type="hidden" name="account_id" value="<%= account.id %>">
+      <div class="form-group"><label class="form-label">Type</label>
+        <select name="type" class="form-select"><option value="credit">➕ Credit</option><option value="debit">➖ Debit</option></select></div>
+      <div class="form-group"><label class="form-label">Amount *</label><input type="number" name="amount" step="0.01" required class="form-input"></div>
+      <div class="form-group"><label class="form-label">Reason</label><input type="text" name="notes" class="form-input" placeholder="Reason for adjustment"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-light" onclick="document.getElementById('adj2').classList.remove('active')">Cancel</button>
+      <button type="submit" class="btn btn-primary">✅ Apply</button>
+    </div>
+  </form>
+</div></div>
+
+<%- include('../partials/layouts/admin-end') -%>
+
+

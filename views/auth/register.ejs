@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#C8102E">
+  <title><%= title %></title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23C8102E'/><text x='50' y='62' font-size='48' font-family='Arial' font-weight='800' text-anchor='middle' fill='white'>U</text></svg>">
+</head>
+<body class="auth-wrap">
+  <div class="auth-card" style="max-width:760px;">
+    <div class="auth-header">
+      <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:16px;">
+        <div class="brand-logo">UCB</div>
+        <div style="text-align:left;">
+          <div style="font-weight:800;color:var(--text-dark);font-size:1.1rem;">United Credit Bank</div>
+          <div style="font-size:0.75rem;color:var(--text-light);">🇦🇺 Open an account in under 2 minutes</div>
+        </div>
+      </div>
+      <h1 style="font-size:1.6rem;">Open your free Australian bank account</h1>
+      <p>No monthly fees, no minimum balance, full digital banking access.</p>
+    </div>
+
+    <% if (typeof errors !== 'undefined' && errors && errors.length > 0) { %>
+      <div class="form-alert form-alert-error">
+        <strong>⚠️ Please check the following:</strong>
+        <ul style="margin-top:6px;padding-left:18px;">
+          <% errors.forEach(e => { %>
+            <li><%= e.msg %></li>
+          <% }) %>
+        </ul>
+      </div>
+    <% } %>
+    <% if (typeof error !== 'undefined' && error) { %>
+      <div class="form-alert form-alert-error">⚠️ <%= error %></div>
+    <% } %>
+
+    <form action="/auth/register" method="POST" id="registerForm">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">First Name *</label>
+          <input type="text" name="first_name" class="form-input" value="<%= typeof old !== 'undefined' ? old.first_name || '' : '' %>" required placeholder="John">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Last Name *</label>
+          <input type="text" name="last_name" class="form-input" value="<%= typeof old !== 'undefined' ? old.last_name || '' : '' %>" required placeholder="Citizen">
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Email Address *</label>
+          <input type="email" name="email" class="form-input" value="<%= typeof old !== 'undefined' ? old.email || '' : '' %>" required placeholder="you@example.com.au">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Phone Number *</label>
+          <input type="tel" name="phone" class="form-input" value="<%= typeof old !== 'undefined' ? old.phone || '' : '' %>" required placeholder="0412 345 678">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Date of Birth</label>
+        <input type="date" name="date_of_birth" class="form-input" value="<%= typeof old !== 'undefined' ? old.date_of_birth || '' : '' %>" max="2010-01-01">
+        <span class="form-hint">Required for KYC verification later</span>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Street Address</label>
+          <input type="text" name="address" class="form-input" value="<%= typeof old !== 'undefined' ? old.address || '' : '' %>" placeholder="123 Main Street">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Suburb / City</label>
+          <input type="text" name="city" class="form-input" value="<%= typeof old !== 'undefined' ? old.city || '' : '' %>" placeholder="Sydney">
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">State</label>
+          <select name="state" class="form-select">
+            <option value="">Select State</option>
+            <option value="NSW" <%= (typeof old !== 'undefined' && old.state === 'NSW') ? 'selected' : '' %>>NSW - New South Wales</option>
+            <option value="VIC" <%= (typeof old !== 'undefined' && old.state === 'VIC') ? 'selected' : '' %>>VIC - Victoria</option>
+            <option value="QLD" <%= (typeof old !== 'undefined' && old.state === 'QLD') ? 'selected' : '' %>>QLD - Queensland</option>
+            <option value="SA" <%= (typeof old !== 'undefined' && old.state === 'SA') ? 'selected' : '' %>>SA - South Australia</option>
+            <option value="WA" <%= (typeof old !== 'undefined' && old.state === 'WA') ? 'selected' : '' %>>WA - Western Australia</option>
+            <option value="TAS" <%= (typeof old !== 'undefined' && old.state === 'TAS') ? 'selected' : '' %>>TAS - Tasmania</option>
+            <option value="ACT" <%= (typeof old !== 'undefined' && old.state === 'ACT') ? 'selected' : '' %>>ACT - Australian Capital</option>
+            <option value="NT" <%= (typeof old !== 'undefined' && old.state === 'NT') ? 'selected' : '' %>>NT - Northern Territory</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Postcode</label>
+          <input type="text" name="postcode" class="form-input" value="<%= typeof old !== 'undefined' ? old.postcode || '' : '' %>" placeholder="2000">
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">Password *</label>
+          <input type="password" name="password" class="form-input" id="regPwd" required placeholder="At least 8 characters">
+          <span class="form-hint">Minimum 8 characters, include numbers & letters</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Confirm Password *</label>
+          <input type="password" name="confirm_password" class="form-input" id="regPwdConfirm" required placeholder="Re-enter password">
+          <div id="pwdMatch"></div>
+        </div>
+      </div>
+      <div style="padding:16px;background:var(--primary-alpha);border-radius:var(--radius-sm);margin-bottom:20px;border:1px solid rgba(200,16,46,0.15);">
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:0.9rem;color:var(--text-dark);">
+          <input type="checkbox" required style="width:18px;height:18px;margin-top:2px;">
+          <div>
+            <strong>I agree to the United Credit Bank Terms & Conditions</strong>
+            <div style="color:var(--text-gray);font-size:0.8rem;margin-top:2px;">I confirm I am 18+ years old, an Australian resident for tax purposes, and consent to electronic communications.</div>
+          </div>
+        </label>
+      </div>
+      <button type="submit" class="btn btn-primary btn-lg btn-block">🇦🇺 Open My Free Account</button>
+    </form>
+
+    <div class="auth-footer">
+      Already have an account? <a href="/auth/login" style="font-weight:600;">Sign in here</a>
+    </div>
+  </div>
+  <script src="/js/common.js"></script>
+  <script src="/js/auth.js"></script>
+</body>
+</html>

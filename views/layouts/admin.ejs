@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#C8102E">
+  <title><%= title %></title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23C8102E'/><text x='50' y='62' font-size='48' font-family='Arial' font-weight='800' text-anchor='middle' fill='white'>U</text></svg>">
+</head>
+<body>
+  <div class="layout">
+    <%- include('../partials/sidebar-admin') %>
+    <div class="main">
+      <%- include('../partials/topbar') %>
+      <div class="content">
+        <%- body %>
+      </div>
+    </div>
+  </div>
+
+  <% if (typeof error !== 'undefined' && error) { %>
+    <div id="toast-error" class="alert alert-danger" style="position:fixed;top:20px;right:20px;z-index:9999;max-width:400px;box-shadow:0 10px 30px rgba(0,0,0,0.15);">
+      <span class="alert-icon">⚠️</span>
+      <div class="alert-content">
+        <div class="alert-title">Error</div>
+        <p class="alert-message"><%= error %></p>
+      </div>
+    </div>
+  <% } %>
+  <% if (typeof success !== 'undefined' && success) { %>
+    <div id="toast-success" class="alert alert-success" style="position:fixed;top:20px;right:20px;z-index:9999;max-width:400px;box-shadow:0 10px 30px rgba(0,0,0,0.15);">
+      <span class="alert-icon">✓</span>
+      <div class="alert-content">
+        <div class="alert-title">Success</div>
+        <p class="alert-message"><%= success %></p>
+      </div>
+    </div>
+  <% } %>
+  <script src="/js/common.js"></script>
+  <script src="/js/admin-dashboard.js"></script>
+  <% if (typeof scripts !== 'undefined' && scripts) { scripts.forEach(s => { %>
+    <script src="<%= s %>"></script>
+  <% }) } %>
+</body>
+</html>

@@ -1,0 +1,235 @@
+<% const pageScripts = ['/js/cards.js']; %>
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/cards" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← All Cards</a>
+
+<% 
+  const num = card.card_number || '4539000000000000';
+  const masked = num.slice(0,4) + ' ' + '•••• ' + '•••• ' + num.slice(-4);
+  const isCredit = card.card_type.includes('Credit');
+  const statusColor = card.status === 'active' ? 'var(--success-light)' : card.status === 'pending' ? 'var(--warning-light)' : 'var(--danger-light)';
+  const statusTextColor = card.status === 'active' ? 'var(--success)' : card.status === 'pending' ? 'var(--warning)' : 'var(--danger)';
+%>
+
+<div style="display:grid;grid-template-columns:380px 1fr;gap:24px;margin-bottom:24px;">
+  <div style="position:relative;border-radius:24px;padding:28px;color:white;background:<%= card.status === 'blocked' || card.is_lost ? 'linear-gradient(135deg,#4B5563,#1F2937)' : isCredit ? 'linear-gradient(135deg,#C8102E,#7A0A1D)' : 'linear-gradient(135deg,#111827,#374151)' %>;overflow:hidden;min-height:240px;aspect-ratio:1.586;">
+    <div style="position:absolute;top:-50px;right:-50px;width:220px;height:220px;background:white;opacity:0.06;border-radius:50%;"></div>
+    <div style="position:absolute;bottom:-40px;left:-40px;width:160px;height:160px;background:white;opacity:0.05;border-radius:50%;"></div>
+    <div style="position:relative;z-index:1;display:flex;justify-content:space-between;align-items:start;">
+      <div>
+        <div style="font-size:0.72rem;opacity:0.75;text-transform:uppercase;letter-spacing:0.12em;">United Credit Bank</div>
+        <div style="font-weight:700;font-size:1.15rem;margin-top:4px;"><%= card.card_type %></div>
+      </div>
+      <div style="padding:5px 12px;border-radius:999px;background:<%= statusColor %>;color:<%= statusTextColor %>;font-weight:700;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;">
+        <%= card.status %>
+      </div>
+    </div>
+    <div style="position:relative;z-index:1;margin-top:36px;">
+      <div style="display:flex;gap:12px;align-items:center;">
+        <div style="width:44px;height:34px;background:linear-gradient(135deg,#FCD34D,#F59E0B);border-radius:5px;"></div>
+        <% if (isCredit) { %>
+          <div style="margin-left:auto;font-size:1rem;font-weight:800;font-style:italic;opacity:0.9;">VISA</div>
+        <% } else { %>
+          <div style="margin-left:auto;font-size:0.9rem;font-weight:800;opacity:0.9;">eftpos ▸</div>
+        <% } %>
+      </div>
+      <div style="font-family:monospace;font-size:1.35rem;margin-top:22px;letter-spacing:0.08em;font-weight:600;cursor:pointer;" onclick="toggleNumber()"><%= masked %></div>
+    </div>
+    <div style="position:relative;z-index:1;margin-top:22px;display:flex;justify-content:space-between;align-items:end;">
+      <div>
+        <div style="font-size:0.62rem;opacity:0.7;text-transform:uppercase;letter-spacing:0.06em;">Cardholder</div>
+        <div style="font-weight:600;font-size:1rem;margin-top:2px;"><%= card.cardholder_name || user.first_name + ' ' + user.last_name %></div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:0.62rem;opacity:0.7;text-transform:uppercase;letter-spacing:0.06em;">Expires</div>
+        <div style="font-family:monospace;font-weight:600;font-size:1rem;margin-top:2px;"><%= card.expiry_date || 'MM/YY' %></div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="stat-cards" style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:16px;">
+      <div class="stat-card">
+        <div class="stat-header">
+          <div>
+            <div class="stat-label"><%= isCredit ? 'Credit Available' : 'Available Balance' %></div>
+            <div class="stat-value" style="color:var(--success);"><%= currency(card.available_credit || 0) %></div>
+          </div>
+          <div class="stat-icon stat-icon-success">✅</div>
+        </div>
+        <div class="stat-change up">of <%= currency(card.credit_limit || 0) %> limit</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-header">
+          <div>
+            <div class="stat-label">CVV</div>
+            <div class="stat-value" style="color:var(--primary);font-family:monospace;">•••</div>
+          </div>
+          <div class="stat-icon stat-icon-primary">🔒</div>
+        </div>
+        <div class="stat-change">Tap to reveal</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-body" style="padding:0;">
+        <div style="display:flex;gap:0;border-bottom:1px solid var(--border);">
+          <button class="btn btn-light" style="flex:1;border-radius:0;border:none;background:var(--primary-alpha);color:var(--primary);font-weight:700;" onclick="showTab('actions')">⚡ Quick Actions</button>
+          <button class="btn btn-light" style="flex:1;border-radius:0;border:none;background:transparent;" onclick="showTab('settings')">⚙️ Card Settings</button>
+        </div>
+        <div id="actionsTab" style="padding:20px;display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+          <% if (card.status === 'active') { %>
+            <a href="#" class="btn btn-outline" style="justify-content:flex-start;">🔢 Change PIN</a>
+            <a href="#" class="btn btn-outline" style="justify-content:flex-start;">💳 View Card Number</a>
+            <a href="/cards/<%= card.id %>/freeze" class="btn btn-outline" style="justify-content:flex-start;">❄️ Freeze Card</a>
+            <a href="/cards/<%= card.id %>/replace" class="btn btn-outline" style="justify-content:flex-start;">🔄 Replace Card</a>
+          <% } %>
+          <% if (card.status === 'frozen') { %>
+            <a href="/cards/<%= card.id %>/unfreeze" class="btn btn-primary" style="justify-content:flex-start;">🔥 Unfreeze Card</a>
+          <% } %>
+          <a href="/cards/<%= card.id %>/report" onclick="return confirm('Report this card as lost/stolen? This will permanently block it.');" class="btn btn-danger" style="grid-column:span 2;justify-content:flex-start;">🚨 Report Lost / Stolen</a>
+        </div>
+        <div id="settingsTab" style="display:none;padding:20px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-weight:600;">Contactless Payments</div>
+              <div style="font-size:0.82rem;color:var(--text-light);">$200 limit per tap</div>
+            </div>
+            <span class="status-badge status-active">Enabled</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-weight:600;">Online Purchases</div>
+              <div style="font-size:0.82rem;color:var(--text-light);">Internet & e-commerce</div>
+            </div>
+            <span class="status-badge status-active">Enabled</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-weight:600;">Overseas Use</div>
+              <div style="font-size:0.82rem;color:var(--text-light);">International ATM/POS</div>
+            </div>
+            <span class="status-badge status-pending">Disabled</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;">
+            <div>
+              <div style="font-weight:600;">ATM Withdrawals</div>
+              <div style="font-size:0.82rem;color:var(--text-light);">$1,000 daily limit</div>
+            </div>
+            <span class="status-badge status-active">Enabled</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">📋 Card Information</h3></div>
+    <div class="card-body" style="padding:0;">
+      <div style="display:flex;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text-gray);">Card ID</span>
+        <strong style="font-family:monospace;">CARD-<%= String(card.id).padStart(6, '0') %></strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text-gray);">Card Type</span>
+        <strong><%= card.card_type %></strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text-gray);">Status</span>
+        <span class="status-badge status-<%= card.status %>"><%= card.status %></span>
+      </div>
+      <% if (isCredit) { %>
+      <div style="display:flex;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text-gray);">Credit Limit</span>
+        <strong><%= currency(card.credit_limit) %></strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text-gray);">Current Balance</span>
+        <strong style="color:var(--danger);"><%= currency(card.balance || 0) %></strong>
+      </div>
+      <% } %>
+      <div style="display:flex;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text-gray);">Applied</span>
+        <strong><%= moment(card.applied_at).format('DD MMM YYYY') %></strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:14px 24px;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text-gray);">Issued</span>
+        <strong><%= card.issued_at ? moment(card.issued_at).format('DD MMM YYYY') : '—' %></strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:14px 24px;">
+        <span style="color:var(--text-gray);">Expires</span>
+        <strong><%= card.expiry_date || '—' %></strong>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">📊 Card Activity</h3>
+    </div>
+    <div class="card-body" style="padding:0;">
+      <% if (card.is_lost || card.status === 'blocked') { %>
+        <div class="alert alert-danger" style="margin:16px;">
+          <span class="alert-icon">🚨</span>
+          <div class="alert-content">
+            <div class="alert-title">Card Blocked</div>
+            <p class="alert-message" style="margin:0;">This card has been reported as lost or stolen. Contact support to order a replacement.</p>
+          </div>
+        </div>
+      <% } else if (card.status === 'pending') { %>
+        <div class="alert alert-warning" style="margin:16px;">
+          <span class="alert-icon">⏳</span>
+          <div class="alert-content">
+            <div class="alert-title">Application Pending</div>
+            <p class="alert-message" style="margin:0;">Your application is being reviewed. You'll be notified once a decision is made.</p>
+          </div>
+        </div>
+      <% } %>
+      <div class="timeline">
+        <div class="timeline-item">
+          <div class="timeline-time"><%= moment(card.applied_at).format('DD MMM, HH:mm') %></div>
+          <div class="timeline-title">📝 Application Submitted</div>
+          <div class="timeline-desc">Application for <%= card.card_type %> received.</div>
+        </div>
+        <% if (card.status !== 'pending') { %>
+        <div class="timeline-item">
+          <div class="timeline-time">
+            <%= card.approved_at ? moment(card.approved_at).format('DD MMM, HH:mm') : 'Pending decision' %>
+          </div>
+          <div class="timeline-title">
+            <%= card.status === 'rejected' ? '❌ Application Rejected' : '✅ Application Approved' %>
+          </div>
+          <div class="timeline-desc">
+            <%= card.status === 'rejected' ? 'Application was not approved at this time.' : 'Card approved and queued for printing.' %>
+          </div>
+        </div>
+        <% } %>
+        <% if (card.status === 'active' || card.status === 'frozen') { %>
+        <div class="timeline-item">
+          <div class="timeline-time"><%= moment(card.issued_at).format('DD MMM, HH:mm') %></div>
+          <div class="timeline-title">🎉 Card Issued</div>
+          <div class="timeline-desc">Card activated and ready for use.</div>
+        </div>
+        <% } %>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showTab(tab) {
+  document.querySelectorAll('[id$="Tab"]').forEach(el => el.style.display = 'none');
+  document.querySelectorAll('.card-body button').forEach(el => { el.style.background = 'transparent'; el.style.color = 'var(--text-dark)'; el.style.fontWeight = '500'; });
+  document.getElementById(tab + 'Tab').style.display = 'grid';
+  if (tab === 'settings') document.getElementById('settingsTab').style.display = 'block';
+  event.target.style.background = 'var(--primary-alpha)';
+  event.target.style.color = 'var(--primary)';
+  event.target.style.fontWeight = '700';
+}
+</script>
+
+<%- include('../partials/layouts/user-end', { pageScripts }) -%>
+
+

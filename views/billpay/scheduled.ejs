@@ -1,0 +1,77 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/billpay" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← Bills Hub</a>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+  <div>
+    <h2 style="margin:0;">📅 Scheduled Payments</h2>
+    <p style="margin:4px 0 0;color:var(--text-gray);">Recurring and future-dated bill payments.</p>
+  </div>
+  <a href="/billpay/pay" class="btn btn-primary">➕ Schedule Payment</a>
+</div>
+
+<div class="card">
+  <div class="filter-bar">
+    <div class="filter-group">
+      <span class="filter-label">Status</span>
+      <select class="form-select">
+        <option>All</option>
+        <option>Scheduled</option>
+        <option>Completed</option>
+        <option>Cancelled</option>
+        <option>Failed</option>
+      </select>
+    </div>
+    <button class="btn btn-primary btn-sm">🔍 Filter</button>
+  </div>
+
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Scheduled Date</th>
+          <th>Biller</th>
+          <th>Reference</th>
+          <th>Frequency</th>
+          <th style="text-align:right;">Amount</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% const sched = upcoming.filter(b => b.status === 'scheduled' || b.status === 'pending'); %>
+        <% if (sched.length === 0) { %>
+          <tr><td colspan="7"><div class="empty-state" style="padding:60px 20px;"><div class="empty-state-icon" style="width:72px;height:72px;font-size:2.2rem;">📅</div><h4>No scheduled payments</h4><p>Set up recurring payments to ensure you never miss a bill.</p></div></td></tr>
+        <% } %>
+        <% sched.forEach(b => { %>
+          <tr>
+            <td>
+              <div style="font-weight:600;"><%= moment(b.due_date || b.scheduled_date || b.created_at).format('DD MMM YYYY') %></div>
+              <div style="font-size:0.75rem;color:var(--text-light);"><%= moment(b.due_date || b.scheduled_date || b.created_at).fromNow() %></div>
+            </td>
+            <td>
+              <div style="font-weight:600;font-size:0.9rem;"><%= b.biller_name || b.description || 'Payment' %></div>
+              <% if (b.biller_code) { %><div style="font-size:0.72rem;color:var(--text-light);">BPAY Code: <%= b.biller_code %></div><% } %>
+            </td>
+            <td style="font-family:monospace;font-size:0.85rem;"><%= b.customer_ref || '—' %></td>
+            <td><span class="tag tag-verified"><%= b.frequency || 'One-off' %></span></td>
+            <td style="text-align:right;font-weight:700;color:var(--danger);">-<%= currency(b.amount) %></td>
+            <td><span class="status-badge status-<%= b.status %>"><%= b.status %></span></td>
+            <td>
+              <a href="/billpay/<%= b.id %>" class="btn btn-light btn-sm">View</a>
+              <% if (b.status === 'scheduled' || b.status === 'pending') { %>
+                <form method="POST" action="/billpay/<%= b.id %>/cancel" style="display:inline;" onsubmit="return confirm('Cancel this scheduled payment?');">
+                  <button class="btn btn-danger btn-sm">Cancel</button>
+                </form>
+              <% } %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/layouts/user-end') -%>
+
+

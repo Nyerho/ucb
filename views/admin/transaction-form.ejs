@@ -1,0 +1,177 @@
+<%- include('../partials/layouts/admin-start') -%>
+
+<%
+  const isEdit = !!transaction;
+  const actionUrl = isEdit ? `/admin/transactions/${transaction.id}/update` : '/admin/transactions/create';
+  const selectedAccountId = (filters && filters.account_id) || (transaction ? transaction.account_id : '');
+%>
+
+<a href="/admin/transactions" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← All Transactions</a>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title"><%= isEdit ? '✏️ Edit Transaction' : '➕ Create Transaction' %></h3>
+      <% if (isEdit) { %>
+        <span class="status-badge status-<%= transaction.status %>"><%= transaction.status %></span>
+      <% } %>
+    </div>
+    <div class="card-body">
+      <form method="POST" action="<%= actionUrl %>">
+        <div class="form-group">
+          <label class="form-label">Account *</label>
+          <select name="account_id" required class="form-select">
+            <option value="">Select an account</option>
+            <% accounts.forEach(acc => { %>
+              <option value="<%= acc.id %>" <%= String(selectedAccountId) === String(acc.id) ? 'selected' : '' %>>
+                <%= acc.user_name %> • <%= acc.account_type %> • <%= acc.account_number %>
+              </option>
+            <% }) %>
+          </select>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Transaction Type *</label>
+            <select name="transaction_type" required class="form-select">
+              <% ['deposit', 'withdrawal', 'local_transfer', 'international_transfer', 'bill_payment', 'loan_disbursement', 'admin_adjustment'].forEach(type => { %>
+                <option value="<%= type %>" <%= transaction && transaction.transaction_type === type ? 'selected' : '' %>><%= type.replace(/_/g, ' ') %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status *</label>
+            <select name="status" required class="form-select">
+              <% ['completed', 'pending', 'rejected', 'cancelled'].forEach(s => { %>
+                <option value="<%= s %>" <%= ((transaction && transaction.status === s) || (!transaction && s === 'completed')) ? 'selected' : '' %>><%= s %></option>
+              <% }) %>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Amount *</label>
+            <input type="number" name="amount" required step="0.01" class="form-input" value="<%= transaction ? transaction.amount : '' %>" placeholder="0.00">
+            <span class="form-hint">For `admin_adjustment`, use a positive amount to credit and a negative amount to debit.</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Fee</label>
+            <input type="number" name="fee" step="0.01" class="form-input" value="<%= transaction ? (transaction.fee || 0) : 0 %>">
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Currency</label>
+            <input type="text" name="currency" class="form-input" value="<%= transaction ? (transaction.currency || 'AUD') : 'AUD' %>" maxlength="3">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Backdate / Created At *</label>
+            <input type="datetime-local" name="created_at" required class="form-input" value="<%= transaction && transaction.created_at ? moment(transaction.created_at).format('YYYY-MM-DDTHH:mm') : moment().format('YYYY-MM-DDTHH:mm') %>">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <input type="text" name="description" class="form-input" value="<%= transaction ? (transaction.description || '') : '' %>" placeholder="What happened on this transaction?">
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Reference</label>
+            <input type="text" name="reference" class="form-input" value="<%= transaction ? (transaction.reference || '') : '' %>">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Recipient Name</label>
+            <input type="text" name="recipient_name" class="form-input" value="<%= transaction ? (transaction.recipient_name || '') : '' %>">
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Recipient Account / IBAN</label>
+            <input type="text" name="recipient_account" class="form-input" value="<%= transaction ? (transaction.recipient_account || transaction.iban || '') : '' %>">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Recipient BSB</label>
+            <input type="text" name="recipient_bsb" class="form-input" value="<%= transaction ? (transaction.recipient_bsb || '') : '' %>">
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Recipient Bank</label>
+            <input type="text" name="recipient_bank" class="form-input" value="<%= transaction ? (transaction.recipient_bank || '') : '' %>">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Country</label>
+            <input type="text" name="country" class="form-input" value="<%= transaction ? (transaction.country || 'Australia') : 'Australia' %>">
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">SWIFT Code</label>
+            <input type="text" name="swift_code" class="form-input" value="<%= transaction ? (transaction.swift_code || '') : '' %>">
+          </div>
+          <div class="form-group">
+            <label class="form-label">IBAN</label>
+            <input type="text" name="iban" class="form-input" value="<%= transaction ? (transaction.iban || '') : '' %>">
+          </div>
+        </div>
+
+        <% if (isEdit) { %>
+          <div class="form-group">
+            <label class="form-label">Rejection Reason</label>
+            <input type="text" name="rejection_reason" class="form-input" value="<%= transaction.rejection_reason || '' %>">
+          </div>
+        <% } %>
+
+        <div class="d-flex gap-3 flex-wrap">
+          <button type="submit" class="btn btn-primary"><%= isEdit ? '💾 Save Transaction' : '✅ Create Transaction' %></button>
+          <% if (isEdit) { %>
+            <a href="/admin/transactions" class="btn btn-light">Back to Transactions</a>
+          <% } else { %>
+            <a href="/admin/transactions" class="btn btn-light">Cancel</a>
+          <% } %>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">🧾 Admin Notes</h3></div>
+    <div class="card-body">
+      <div class="timeline">
+        <div class="timeline-item">
+          <div class="timeline-time">Backdating</div>
+          <div class="timeline-title">Use `Created At` to place historical transactions</div>
+          <div class="timeline-desc">This updates the record timestamp and recalculates the selected account using the edited transaction values.</div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-time">Balance Effects</div>
+          <div class="timeline-title">Completed and pending transactions affect accounts differently</div>
+          <div class="timeline-desc">Completed incoming items credit balances. Completed outgoing items debit balances. Pending outgoing items place a hold on available balance only.</div>
+        </div>
+        <div class="timeline-item">
+          <div class="timeline-time">Manual Correction</div>
+          <div class="timeline-title">Use `admin_adjustment` for direct statement corrections</div>
+          <div class="timeline-desc">Enter a positive amount to credit funds or a negative amount to remove funds from the account.</div>
+        </div>
+      </div>
+
+      <% if (isEdit) { %>
+        <div class="alert alert-info" style="margin-top:20px;">
+          <span class="alert-icon">ℹ️</span>
+          <div class="alert-content">
+            <div class="alert-title">Transaction Reference</div>
+            <p class="alert-message">Editing transaction #<%= transaction.id %> for <%= transaction.user_name %> on account <%= transaction.account_number %>.</p>
+          </div>
+        </div>
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/layouts/admin-end') -%>

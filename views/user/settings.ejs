@@ -1,0 +1,139 @@
+<% const pageScripts = ['/js/profile.js']; %>
+<%- include('../partials/layouts/user-start') -%>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">🔐 Change Password</h3></div>
+    <div class="card-body">
+      <form method="POST" action="/user/change-password">
+        <div class="form-group">
+          <label class="form-label">Current Password *</label>
+          <input type="password" name="current_password" required class="form-input" placeholder="Enter your current password">
+        </div>
+        <div class="form-group">
+          <label class="form-label">New Password *</label>
+          <input type="password" name="new_password" required class="form-input" id="newPassword" placeholder="Min. 8 characters">
+          <span class="form-hint">Must be at least 8 characters, include uppercase, lowercase, and a number.</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Confirm New Password *</label>
+          <input type="password" name="confirm_password" required class="form-input" id="confirmPassword" placeholder="Re-enter new password">
+        </div>
+        <div class="progress" style="margin-bottom:16px;">
+          <div class="progress-bar" id="passwordStrength" style="width:0%;"></div>
+        </div>
+        <div id="passwordHint" style="font-size:0.85rem;color:var(--text-light);margin-bottom:16px;">Enter a password to see strength.</div>
+        <button type="submit" class="btn btn-primary btn-lg btn-block">🔐 Update Password</button>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">🔢 Transfer PIN Security</h3></div>
+      <div class="card-body">
+        <div class="alert <%= hasTransferPin ? 'alert-success' : 'alert-warning' %>">
+          <span class="alert-icon"><%= hasTransferPin ? '✅' : '⚠️' %></span>
+          <div class="alert-content">
+            <div class="alert-title"><%= hasTransferPin ? 'Transfer PIN Active' : 'Transfer PIN Required' %></div>
+            <p class="alert-message"><%= hasTransferPin ? 'Your transfer PIN is now required for local and international transfers.' : 'Create a 4 to 6 digit transfer PIN to approve local and international transfers securely.' %></p>
+          </div>
+        </div>
+        <form method="POST" action="/user/settings/transfer-pin">
+          <div class="form-group">
+            <label class="form-label">Current Password *</label>
+            <input type="password" name="current_password" required class="form-input" placeholder="Confirm with your login password">
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label"><%= hasTransferPin ? 'New Transfer PIN *' : 'Create Transfer PIN *' %></label>
+              <input type="password" name="transfer_pin" required class="form-input" placeholder="4 to 6 digits" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6">
+              <span class="form-hint">Use only numbers. Avoid using your birth year or repeated digits.</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Confirm Transfer PIN *</label>
+              <input type="password" name="confirm_transfer_pin" required class="form-input" placeholder="Re-enter transfer PIN" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6">
+            </div>
+          </div>
+          <% if (user.transfer_pin_updated_at) { %>
+            <div class="form-hint" style="margin-bottom:16px;">Last updated: <%= moment(user.transfer_pin_updated_at).format('DD MMM YYYY HH:mm') %></div>
+          <% } %>
+          <button type="submit" class="btn btn-primary btn-lg btn-block">🔐 <%= hasTransferPin ? 'Update Transfer PIN' : 'Create Transfer PIN' %></button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">🔐 Security Recommendations</h3></div>
+      <div class="card-body">
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="timeline-time">Strong password ✓</div>
+            <div class="timeline-title">Use a unique, strong password</div>
+            <div class="timeline-desc">Combine uppercase, lowercase, numbers, and symbols. Avoid using the same password across multiple sites.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-time">Two-Factor Auth</div>
+            <div class="timeline-title">Enable 2FA for extra security</div>
+            <div class="timeline-desc">Add an extra layer of protection by requiring a code from your phone when logging in.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-time">Device Security</div>
+            <div class="timeline-title">Keep devices updated</div>
+            <div class="timeline-desc">Always keep your operating system, browser, and antivirus software up to date.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="timeline-time">Phishing Awareness</div>
+            <div class="timeline-title">Watch for scams</div>
+            <div class="timeline-desc">United Credit Bank will never ask you for your password or PIN via email, SMS, or phone call.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">📱 Notifications</h3></div>
+      <div class="card-body">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 0;border-bottom:1px solid var(--border);">
+          <div>
+            <div style="font-weight:600;">Email Notifications</div>
+            <div style="font-size:0.85rem;color:var(--text-light);">Receive email alerts for transactions and updates</div>
+          </div>
+          <label class="toggle-switch" style="position:relative;display:inline-block;width:48px;height:24px;">
+            <input type="checkbox" checked style="opacity:0;width:0;height:0;">
+            <span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:var(--primary);border-radius:999px;transition:.3s;">
+              <span style="position:absolute;content:'';height:18px;width:18px;left:3px;top:3px;background:white;border-radius:50%;transition:.3s;transform:translateX(24px);"></span>
+            </span>
+          </label>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 0;border-bottom:1px solid var(--border);">
+          <div>
+            <div style="font-weight:600;">Push Notifications</div>
+            <div style="font-size:0.85rem;color:var(--text-light);">Get instant push alerts on your mobile device</div>
+          </div>
+          <label class="toggle-switch" style="position:relative;display:inline-block;width:48px;height:24px;">
+            <input type="checkbox" checked style="opacity:0;width:0;height:0;">
+            <span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:var(--primary);border-radius:999px;transition:.3s;">
+              <span style="position:absolute;content:'';height:18px;width:18px;left:3px;top:3px;background:white;border-radius:50%;transition:.3s;transform:translateX(24px);"></span>
+            </span>
+          </label>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 0;">
+          <div>
+            <div style="font-weight:600;">Monthly Statement</div>
+            <div style="font-size:0.85rem;color:var(--text-light);">Receive monthly account statements via email</div>
+          </div>
+          <label class="toggle-switch" style="position:relative;display:inline-block;width:48px;height:24px;">
+            <input type="checkbox" checked style="opacity:0;width:0;height:0;">
+            <span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:var(--primary);border-radius:999px;transition:.3s;">
+              <span style="position:absolute;content:'';height:18px;width:18px;left:3px;top:3px;background:white;border-radius:50%;transition:.3s;transform:translateX(24px);"></span>
+            </span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/layouts/user-end', { pageScripts }) -%>
+

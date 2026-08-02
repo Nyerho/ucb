@@ -1,0 +1,192 @@
+<% const pageScripts = ['/js/transfers.js']; %>
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/transfers" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← All Transfers</a>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">🌍 International Transfer (SWIFT)</h3></div>
+    <div class="card-body">
+      <% if (!hasTransferPin) { %>
+        <div class="alert alert-warning">
+          <span class="alert-icon">🔐</span>
+          <div class="alert-content">
+            <div class="alert-title">Transfer PIN Required</div>
+            <p class="alert-message">Create your transfer PIN in <a href="/user/settings">Settings</a> before sending international payments.</p>
+          </div>
+        </div>
+      <% } %>
+      <form method="POST" action="/transfers/international" id="intlTransferForm">
+        <div class="form-group">
+          <label class="form-label">From Account (AUD) *</label>
+          <select name="from_account" required class="form-select">
+            <% accounts.forEach(acc => { %>
+              <option value="<%= acc.id %>" <%= (typeof selectedAccountId !== 'undefined' && selectedAccountId === acc.id) ? 'selected' : '' %>>
+                <%= acc.account_type %> • Available: <%= currency(acc.available_balance) %>
+              </option>
+            <% }) %>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Destination Currency *</label>
+          <select name="currency" required class="form-select" id="currencySelect">
+            <% Object.keys(rates).forEach(curr => { %>
+              <option value="<%= curr %>" data-rate="<%= rates[curr] %>"><%= curr %> • 1 AUD = <%= rates[curr] %> <%= curr %></option>
+            <% }) %>
+          </select>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Destination Country *</label>
+            <select name="country" required class="form-select">
+              <% countries.forEach(c => { %>
+                <option value="<%= c %>"><%= c %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">SWIFT / BIC Code *</label>
+            <input type="text" name="swift_code" required class="form-input" placeholder="e.g. NATAUS33" maxlength="11">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Recipient Name *</label>
+          <input type="text" name="to_name" required class="form-input" id="toNameIntl" placeholder="Full legal name per bank">
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">IBAN / Account No. *</label>
+            <input type="text" name="iban" required class="form-input" placeholder="IBAN or account number">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Bank Name</label>
+            <input type="text" name="bank_name" class="form-input" placeholder="e.g. Barclays London">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Amount (AUD) to send *</label>
+          <div style="position:relative;">
+            <span style="position:absolute;left:16px;top:50%;transform:translateY(-50%);font-weight:600;color:var(--text-gray);">$</span>
+            <input type="number" name="amount" id="amountIntl" required min="100" step="0.01" value="500" class="form-input" style="padding-left:32px;">
+          </div>
+          <span class="form-hint">Min. $100 AUD. Fixed $25 fee. Large amounts may require approval.</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Reference / Purpose of Payment</label>
+          <input type="text" name="reference" class="form-input" placeholder="e.g. Family support, Invoice #...">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Transfer PIN *</label>
+          <input type="password" name="transfer_pin" required class="form-input" placeholder="Enter your 4 to 6 digit transfer PIN" inputmode="numeric" pattern="[0-9]{4,6}" maxlength="6">
+          <span class="form-hint">Your transfer PIN is checked before the payment is submitted for processing.</span>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg btn-block">✅ Review & Send Transfer</button>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">💱 Transfer Conversion</h3></div>
+      <div class="card-body" id="intlSummaryBox">
+        <div style="color:var(--text-light);text-align:center;padding:20px;">Calculating...</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">⏱️ Timelines</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start;">
+          <div style="width:28px;height:28px;border-radius:50%;background:var(--primary-alpha);color:var(--primary);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8rem;flex-shrink:0;">1</div>
+          <div>
+            <div style="font-weight:600;">Sent today</div>
+            <div style="font-size:0.82rem;color:var(--text-light);">We process your transfer and debit AUD</div>
+          </div>
+        </div>
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;gap:12px;align-items:flex-start;">
+          <div style="width:28px;height:28px;border-radius:50%;background:var(--primary-alpha);color:var(--primary);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8rem;flex-shrink:0;">2</div>
+          <div>
+            <div style="font-weight:600;">1-2 business days</div>
+            <div style="font-size:0.82rem;color:var(--text-light);">SWIFT network routes via partner banks</div>
+          </div>
+        </div>
+        <div style="padding:14px 20px;display:flex;gap:12px;align-items:flex-start;">
+          <div style="width:28px;height:28px;border-radius:50%;background:var(--success-light);color:var(--success);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8rem;flex-shrink:0;">3</div>
+          <div>
+            <div style="font-weight:600;">2-3 business days</div>
+            <div style="font-size:0.82rem;color:var(--text-light);">Funds arrive in recipient's bank</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">ℹ️ Fees</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div style="display:flex;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <span>Fixed transfer fee</span>
+          <strong>$25.00</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <span>Approval required</span>
+          <strong>Amounts ≥ $5,000</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:14px 20px;">
+          <span>Daily limit</span>
+          <strong>$50,000 AUD</strong>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function updateIntlSummary() {
+  const aud = parseFloat(document.getElementById('amountIntl').value) || 0;
+  const sel = document.getElementById('currencySelect');
+  const rate = parseFloat(sel.selectedOptions[0]?.dataset.rate || 1);
+  const curr = sel.value;
+  const fee = 25;
+  const totalAud = aud + fee;
+  const foreignAmt = aud * rate;
+  const needsApproval = aud >= 5000;
+  document.getElementById('intlSummaryBox').innerHTML = `
+    <div style="padding:4px 0 16px;border-bottom:1px dashed var(--border);margin-bottom:16px;">
+      <div style="font-size:0.78rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">You Send (AUD)</div>
+      <div style="font-size:2rem;font-weight:800;color:var(--danger);">A$${aud.toLocaleString('en-AU', {minimumFractionDigits: 2})}</div>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:0.9rem;">
+      <span style="color:var(--text-gray);">Exchange rate</span>
+      <strong>1 AUD = ${rate} ${curr}</strong>
+    </div>
+    <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:0.9rem;">
+      <span style="color:var(--text-gray);">Service fee</span>
+      <strong>A$${fee.toFixed(2)}</strong>
+    </div>
+    <div style="padding:14px 0 4px;border-top:2px solid var(--border);margin-top:8px;">
+      <div style="font-size:0.78rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Recipient receives</div>
+      <div style="font-size:1.5rem;font-weight:800;color:var(--success);">${curr} ${foreignAmt.toLocaleString('en-AU', {minimumFractionDigits: 2})}</div>
+    </div>
+    <div style="padding-top:8px;border-top:1px solid var(--border);margin-top:12px;display:flex;justify-content:space-between;">
+      <span style="font-weight:700;">Total cost (AUD)</span>
+      <strong style="color:var(--primary);font-size:1.1rem;">A$${totalAud.toLocaleString('en-AU', {minimumFractionDigits: 2})}</strong>
+    </div>
+    ${needsApproval ? `<div class="alert alert-warning" style="margin-top:16px;margin-bottom:0;"><span class="alert-icon">⏳</span><div class="alert-content"><div class="alert-title">Approval Required</div><p class="alert-message" style="margin:0;">Large transfers require security review. Usually approved within 4 business hours.</p></div></div>` : ''}
+  `;
+}
+document.getElementById('amountIntl').addEventListener('input', updateIntlSummary);
+document.getElementById('currencySelect').addEventListener('change', updateIntlSummary);
+setTimeout(updateIntlSummary, 100);
+</script>
+
+<%- include('../partials/layouts/user-end', { pageScripts }) -%>
+
+

@@ -1,0 +1,148 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+  <div>
+    <h2 style="margin:0;">👥 Beneficiaries & Payees</h2>
+    <p style="margin:4px 0 0;color:var(--text-gray);">Manage your saved payees for quick transfers and bill payments.</p>
+  </div>
+  <button class="btn btn-primary btn-lg" onclick="document.getElementById('addBeneficiaryModal').classList.add('active')">➕ Add Beneficiary</button>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">🇦🇺 Australian Beneficiaries</h3></div>
+    <div class="card-body" style="padding:0;">
+      <% const local = beneficiaries.filter(b => !b.is_international); %>
+      <% if (local.length === 0) { %>
+        <div class="empty-state" style="padding:40px 20px;">
+          <div class="empty-state-icon">📋</div>
+          <h4>No local beneficiaries yet</h4>
+          <p>Add friends, family, or businesses you frequently transfer money to.</p>
+        </div>
+      <% } %>
+      <% local.forEach(b => { %>
+        <div style="padding:16px 24px;border-bottom:1px solid var(--border);display:flex;gap:16px;align-items:center;">
+          <div class="user-avatar" style="width:48px;height:48px;font-size:1rem;"><%= b.name.charAt(0) %></div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:700;font-size:0.95rem;"><%= b.name %></div>
+            <div style="font-size:0.82rem;color:var(--text-gray);font-family:monospace;">
+              BSB <%= b.bsb || '—' %> • ACC <%= b.account_number %>
+            </div>
+            <% if (b.bank_name) { %>
+              <div style="font-size:0.8rem;color:var(--text-light);"><%= b.bank_name %></div>
+            <% } %>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <a href="/transfers/local?beneficiary=<%= b.id %>" class="btn btn-primary btn-sm">↔️ Transfer</a>
+            <form method="POST" action="/user/beneficiaries/delete/<%= b.id %>" onsubmit="return confirm('Delete this beneficiary?');">
+              <button class="btn btn-danger btn-sm" type="submit">🗑️</button>
+            </form>
+          </div>
+        </div>
+      <% }) %>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">🌍 International Beneficiaries</h3></div>
+    <div class="card-body" style="padding:0;">
+      <% const intl = beneficiaries.filter(b => b.is_international); %>
+      <% if (intl.length === 0) { %>
+        <div class="empty-state" style="padding:40px 20px;">
+          <div class="empty-state-icon">🌏</div>
+          <h4>No international beneficiaries</h4>
+          <p>Add overseas recipients for low-cost international transfers.</p>
+        </div>
+      <% } %>
+      <% intl.forEach(b => { %>
+        <div style="padding:16px 24px;border-bottom:1px solid var(--border);display:flex;gap:16px;align-items:center;">
+          <div class="user-avatar" style="width:48px;height:48px;font-size:1rem;background:linear-gradient(135deg,#2563EB,#1E40AF);"><%= b.name.charAt(0) %></div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:700;font-size:0.95rem;"><%= b.name %> <span class="tag">📍 <%= b.country || 'Overseas' %></span></div>
+            <% if (b.swift_code) { %>
+              <div style="font-size:0.82rem;color:var(--text-gray);">SWIFT: <span style="font-family:monospace;"><%= b.swift_code %></span></div>
+            <% } %>
+            <% if (b.iban) { %>
+              <div style="font-size:0.82rem;color:var(--text-gray);">IBAN: <span style="font-family:monospace;"><%= b.iban %></span></div>
+            <% } %>
+            <% if (b.account_number) { %>
+              <div style="font-size:0.8rem;color:var(--text-light);font-family:monospace;">ACC: <%= b.account_number %></div>
+            <% } %>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <a href="/transfers/international?beneficiary=<%= b.id %>" class="btn btn-primary btn-sm">🌍 Transfer</a>
+            <form method="POST" action="/user/beneficiaries/delete/<%= b.id %>" onsubmit="return confirm('Delete this beneficiary?');">
+              <button class="btn btn-danger btn-sm" type="submit">🗑️</button>
+            </form>
+          </div>
+        </div>
+      <% }) %>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="addBeneficiaryModal">
+  <div class="modal-dialog" style="max-width:560px;">
+    <div class="modal-header">
+      <h3 class="modal-title">➕ Add New Beneficiary</h3>
+      <button class="modal-close" onclick="document.getElementById('addBeneficiaryModal').classList.remove('active')">✕</button>
+    </div>
+    <form method="POST" action="/user/beneficiaries/add">
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Beneficiary Type</label>
+          <select id="benType" name="is_international" class="form-select" onchange="toggleBenType()">
+            <option value="0">🇦🇺 Australian (Local)</option>
+            <option value="1">🌍 International (Overseas)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Full Name *</label>
+          <input type="text" name="name" required class="form-input" placeholder="e.g. Jane Smith">
+        </div>
+        <div class="form-grid">
+          <div id="bsbWrap">
+            <label class="form-label">BSB</label>
+            <input type="text" name="bsb" class="form-input" placeholder="e.g. 082-987" maxlength="7">
+          </div>
+          <div>
+            <label class="form-label">Account Number *</label>
+            <input type="text" name="account_number" required class="form-input" placeholder="Account number / IBAN">
+          </div>
+        </div>
+        <div class="form-group" id="bankWrap">
+          <label class="form-label">Bank Name</label>
+          <input type="text" name="bank_name" class="form-input" placeholder="e.g. Commonwealth Bank">
+        </div>
+        <div id="intlWrap" style="display:none;">
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">Country</label>
+              <input type="text" name="country" class="form-input" placeholder="e.g. New Zealand">
+            </div>
+            <div class="form-group">
+              <label class="form-label">SWIFT Code</label>
+              <input type="text" name="swift_code" class="form-input" placeholder="e.g. NATAUS33">
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" onclick="document.getElementById('addBeneficiaryModal').classList.remove('active')">Cancel</button>
+        <button type="submit" class="btn btn-primary">💾 Save Beneficiary</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function toggleBenType() {
+  const isIntl = document.getElementById('benType').value === '1';
+  document.getElementById('intlWrap').style.display = isIntl ? 'block' : 'none';
+  document.getElementById('bsbWrap').style.display = isIntl ? 'none' : 'block';
+  document.getElementById('bankWrap').style.display = isIntl ? 'none' : 'block';
+}
+</script>
+
+<%- include('../partials/layouts/user-end') -%>
+

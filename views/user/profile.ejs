@@ -1,0 +1,151 @@
+<% const pageScripts = ['/js/profile.js']; %>
+<%- include('../partials/layouts/user-start') -%>
+
+<div class="profile-header">
+  <div class="avatar-big"><%= user.first_name.charAt(0) + user.last_name.charAt(0) %></div>
+  <div class="profile-info">
+    <h3><%= user.first_name %> <%= user.last_name %></h3>
+    <p style="color:var(--text-gray);margin:0;"><%= user.email %></p>
+    <div class="profile-meta">
+      <% if (user.is_verified) { %>
+        <span class="tag tag-verified">✓ Verified</span>
+      <% } else { %>
+        <span class="tag tag-unverified">⏳ Unverified</span>
+      <% } %>
+      <% if (user.is_frozen) { %>
+        <span class="tag tag-frozen">❄️ Frozen</span>
+      <% } %>
+      <span class="tag">📱 <%= user.phone %></span>
+    </div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">👤 Personal Information</h3></div>
+    <div class="card-body">
+      <form method="POST" action="/user/profile">
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">First Name *</label>
+            <input type="text" name="first_name" required value="<%= user.first_name %>" class="form-input">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Last Name *</label>
+            <input type="text" name="last_name" required value="<%= user.last_name %>" class="form-input">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Email *</label>
+            <input type="email" name="email" required value="<%= user.email %>" class="form-input">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Phone *</label>
+            <input type="tel" name="phone" required value="<%= user.phone %>" class="form-input">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Date of Birth</label>
+            <input type="date" name="date_of_birth" value="<%= user.date_of_birth || '' %>" class="form-input">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Country</label>
+            <input type="text" name="country" value="<%= user.country || 'Australia' %>" class="form-input" readonly>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Street Address</label>
+          <input type="text" name="address" value="<%= user.address || '' %>" placeholder="e.g. 123 Bondi Road" class="form-input">
+        </div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Suburb / City</label>
+            <input type="text" name="city" value="<%= user.city || '' %>" class="form-input">
+          </div>
+          <div class="form-group">
+            <label class="form-label">State</label>
+            <select name="state" class="form-select">
+              <option value="">Select...</option>
+              <% ['NSW','VIC','QLD','SA','WA','TAS','NT','ACT'].forEach(s => { %>
+                <option value="<%= s %>" <%= user.state === s ? 'selected' : '' %>><%= s %></option>
+              <% }) %>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Postcode</label>
+          <input type="text" name="postcode" value="<%= user.postcode || '' %>" placeholder="e.g. 2000" class="form-input" maxlength="4">
+        </div>
+        <button type="submit" class="btn btn-primary btn-lg btn-block">💾 Save Changes</button>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">🆔 Identity Verification</h3></div>
+      <div class="card-body">
+        <% if (user.is_verified) { %>
+          <div class="alert alert-success">
+            <span class="alert-icon">✅</span>
+            <div class="alert-content">
+              <div class="alert-title">Identity Verified</div>
+              <p class="alert-message">Your account has been fully verified. You have access to all banking features including cards, loans, and higher transaction limits.</p>
+            </div>
+          </div>
+        <% } else { %>
+          <div class="alert alert-warning">
+            <span class="alert-icon">⚠️</span>
+            <div class="alert-content">
+              <div class="alert-title">Verification Required</div>
+              <p class="alert-message">Complete your KYC to unlock cards, loans, and higher transaction limits.</p>
+            </div>
+          </div>
+          <a href="/kyc/submit" class="btn btn-primary btn-block" style="margin-top:12px;">📝 Complete KYC Now</a>
+        <% } %>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">📊 Account Summary</h3></div>
+      <div class="card-body">
+        <div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Customer Since</span>
+          <strong><%= moment(user.created_at).format('DD MMM YYYY') %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Customer ID</span>
+          <strong>UCB-<%= String(user.id).padStart(6, '0') %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-gray);">Last Updated</span>
+          <strong><%= moment(user.updated_at).format('DD MMM YYYY') %></strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:12px 0;">
+          <span style="color:var(--text-gray);">Account Status</span>
+          <% if (user.is_frozen) { %>
+            <span class="status-badge status-frozen">Frozen</span>
+          <% } else { %>
+            <span class="status-badge status-active">Active</span>
+          <% } %>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">🔒 Quick Actions</h3></div>
+      <div class="card-body">
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <a href="/user/settings" class="btn btn-outline btn-block">⚙️ Security & Password</a>
+          <a href="/kyc" class="btn btn-outline btn-block">🆔 Manage KYC</a>
+          <a href="/user/support" class="btn btn-outline btn-block">💬 Contact Support</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/layouts/user-end', { pageScripts }) -%>
+

@@ -1,0 +1,143 @@
+<%- include('../partials/layouts/user-start') -%>
+
+<a href="/billpay" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← Bills Hub</a>
+
+<div class="section-header" style="text-align:left;margin-bottom:24px;">
+  <span class="section-eyebrow">⬆️ Withdraw Funds</span>
+  <h2 style="font-size:2rem;margin:12px 0 8px;">Withdraw money from your account</h2>
+  <p style="margin:0;">Cash, transfer to external bank, or cheque options available.</p>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">💸 Withdrawal Request</h3></div>
+    <div class="card-body">
+      <form method="POST" action="/billpay/withdraw">
+        <div class="form-group">
+          <label class="form-label">From Account *</label>
+          <select name="account_id" required class="form-select" id="accountSel">
+            <% accounts.forEach(acc => { %>
+              <option value="<%= acc.id %>" data-available="<%= acc.available_balance %>"><%= acc.account_type %> • Available: <%= currency(acc.available_balance) %></option>
+            <% }) %>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Withdrawal Method *</label>
+          <select name="method" required class="form-select">
+            <option value="atm">🏧 ATM Cash Withdrawal</option>
+            <option value="branch">🏦 Branch Cash Withdrawal</option>
+            <option value="external_transfer">↔️ Transfer to External Bank</option>
+            <option value="cheque">📝 Bank Cheque Request</option>
+            <option value="card_transfer">💳 To Another Card</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Withdrawal Amount (AUD) *</label>
+          <div style="position:relative;">
+            <span style="position:absolute;left:16px;top:50%;transform:translateY(-50%);font-weight:600;color:var(--text-gray);">$</span>
+            <input type="number" name="amount" id="wdAmount" required min="1" step="0.01" value="200" class="form-input" style="padding-left:32px;">
+          </div>
+          <span class="form-hint">Large withdrawals over $5,000 may require branch pickup and/or approval.</span>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Destination / Purpose</label>
+          <textarea name="destination" rows="2" class="form-input" placeholder="External bank details, reason, or pickup branch"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Reference / Description</label>
+          <input type="text" name="reference" class="form-input" placeholder="e.g. Rent, groceries...">
+        </div>
+
+        <div class="alert alert-warning" style="margin-bottom:20px;">
+          <span class="alert-icon">⚠️</span>
+          <div class="alert-content">
+            <div class="alert-title">Daily Limits Apply</div>
+            <p class="alert-message" style="margin:0;font-size:0.85rem;">ATM withdrawals limited to $1,000/day. For cash over $5,000 please visit a branch. Amounts over $5,000 require admin approval.</p>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-warning btn-lg btn-block">⬆️ Request Withdrawal</button>
+      </form>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">💸 Withdrawal Summary</h3></div>
+      <div class="card-body">
+        <div style="text-align:center;padding:12px 0 20px;border-bottom:1px solid var(--border);margin-bottom:16px;">
+          <div style="font-size:0.78rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Withdrawing</div>
+          <div style="font-size:2.5rem;font-weight:900;color:var(--warning);">-$<span id="wdAmtDisplay">200.00</span></div>
+          <div style="color:var(--text-gray);font-size:0.9rem;">Australian Dollars (AUD)</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:8px 0;">
+          <span style="color:var(--text-gray);">Available balance</span>
+          <strong id="wdAvail">—</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:8px 0;">
+          <span style="color:var(--text-gray);">Fee</span>
+          <strong style="color:var(--success);">$0.00 Free</strong>
+        </div>
+        <div style="padding:12px 0 0;border-top:2px solid var(--border);margin-top:8px;">
+          <div style="display:flex;justify-content:space-between;font-weight:700;font-size:1.05rem;">
+            <span>Remaining balance</span>
+            <strong id="wdRemain" style="color:var(--primary);">$0.00</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header"><h3 class="card-title">⚡ Quick Amounts</h3></div>
+      <div class="card-body" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+        <button class="btn btn-light" onclick="document.getElementById('wdAmount').value=100;upd8();">$100</button>
+        <button class="btn btn-light" onclick="document.getElementById('wdAmount').value=200;upd8();">$200</button>
+        <button class="btn btn-light" onclick="document.getElementById('wdAmount').value=500;upd8();">$500</button>
+        <button class="btn btn-light" onclick="document.getElementById('wdAmount').value=1000;upd8();">$1K</button>
+        <button class="btn btn-light" onclick="document.getElementById('wdAmount').value=2500;upd8();">$2.5K</button>
+        <button class="btn btn-light" onclick="document.getElementById('wdAmount').value=5000;upd8();">$5K</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title">🏧 Withdrawal Limits</h3></div>
+      <div class="card-body" style="padding:0;">
+        <div style="display:flex;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <span>ATM daily limit</span>
+          <strong>$1,000</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);">
+          <span>Instant approval</span>
+          <strong>Up to $5,000</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:14px 20px;">
+          <span>Over $5,000</span>
+          <strong style="color:var(--warning);">Admin approval</strong>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function upd8() {
+  const amt = parseFloat(document.getElementById('wdAmount').value) || 0;
+  const avail = parseFloat(document.getElementById('accountSel').selectedOptions[0].dataset.available) || 0;
+  const remain = avail - amt;
+  document.getElementById('wdAmtDisplay').textContent = amt.toLocaleString('en-AU', {minimumFractionDigits: 2});
+  document.getElementById('wdAvail').textContent = '$' + avail.toLocaleString('en-AU', {minimumFractionDigits: 2});
+  document.getElementById('wdRemain').textContent = '$' + Math.max(0, remain).toLocaleString('en-AU', {minimumFractionDigits: 2});
+  if (remain < 0) document.getElementById('wdRemain').style.color = 'var(--danger)';
+}
+document.getElementById('wdAmount').addEventListener('input', upd8);
+document.getElementById('accountSel').addEventListener('change', upd8);
+setTimeout(upd8, 100);
+</script>
+
+<%- include('../partials/layouts/user-end') -%>
+
+

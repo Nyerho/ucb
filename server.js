@@ -11,32 +11,38 @@ const { db } = require('./database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
+app.set('trust proxy', 1);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const sessionPath = path.join(__dirname, '.sessions');
-fs.mkdirSync(sessionPath, { recursive: true });
-
-app.use(session({
+const sessionConfig = {
   secret: process.env.SESSION_SECRET || 'united-credit-bank-super-secret-key-2026',
   resave: false,
   saveUninitialized: false,
-  store: new FileStore({
-    path: sessionPath,
-    retries: 1
-  }),
   cookie: {
     maxAge: 24 * 60 * 60 * 1000,
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production'
   }
-}));
+};
+
+if (!isServerless) {
+  const sessionPath = path.join(__dirname, '.sessions');
+  fs.mkdirSync(sessionPath, { recursive: true });
+  sessionConfig.store = new FileStore({
+    path: sessionPath,
+    retries: 1
+  });
+}
+
+app.use(session(sessionConfig));
 
 app.use((req, res, next) => {
   res.locals.moment = moment;
@@ -113,24 +119,10 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║   🇦🇺  UNITED CREDIT BANK - Online Banking Platform  🇦🇺    ║
-║                                                              ║
-║   Server running on: http://localhost:${PORT}                 ║
-║                                                              ║
-║   Admin Login:                                               ║
-║     Email: admin@unitedcreditbank.com.au                     ║
-║     Password: Admin@2026                                     ║
-║                                                              ║
-║   Customer Login:                                            ║
-║     Email: john.smith@email.com.au                           ║
-║     Password: Customer@2026                                  ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-  `);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`United Credit Bank server running on http://localhost:${PORT}`);
+  });
+}
 
 module.exports = app;

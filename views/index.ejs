@@ -34,14 +34,14 @@
         </div>
       </div>
     </div>
-    <div class="hero-card reveal-on-scroll is-visible">
+    <div class="hero-card hero-media-card reveal-on-scroll is-visible">
       <div class="bank-card">
         <div class="bank-card-chip"></div>
         <div class="bank-card-number">4539 •••• •••• 2026</div>
         <div class="bank-card-bottom">
           <div class="bank-card-holder">
             <span class="bank-card-label">Card Holder</span>
-            <span class="bank-card-value">JOHN A CITIZEN</span>
+            <span class="bank-card-value">UCB CUSTOMER</span>
           </div>
           <div class="bank-card-holder" style="align-items:flex-end;">
             <span class="bank-card-label">Expires</span>
@@ -52,8 +52,34 @@
           </div>
         </div>
       </div>
-      <div class="hero-illustration-shell float-y">
-        <img src="/images/hero-banking.svg" alt="Animated United Credit Bank banking illustration" class="hero-illustration">
+      <div class="hero-slideshow" id="heroSlideshow" aria-label="United Credit Bank feature showcase">
+        <div class="hero-slide is-active">
+          <img src="/images/herobank.jpg" alt="United Credit Bank hero banking scene" class="hero-slide-image">
+        </div>
+        <div class="hero-slide">
+          <img src="/images/mobileapp.jpg" alt="United Credit Bank mobile banking app visual" class="hero-slide-image">
+        </div>
+        <div class="hero-slide">
+          <img src="/images/growthchart.jpg" alt="United Credit Bank growth and investment visual" class="hero-slide-image">
+        </div>
+        <div class="hero-slide">
+          <img src="/images/walletcards.jpg" alt="United Credit Bank wallet and cards visual" class="hero-slide-image">
+        </div>
+        <div class="hero-slideshow-overlay">
+          <div class="hero-illustration-shell float-y">
+            <img src="/images/hero-banking.svg" alt="Animated United Credit Bank banking illustration" class="hero-illustration">
+          </div>
+          <div class="hero-slide-caption">
+            <span class="hero-slide-kicker">Live Digital Banking</span>
+            <strong>Modern everyday banking with richer visuals and faster actions.</strong>
+          </div>
+        </div>
+        <div class="hero-slide-dots" aria-label="Hero slideshow controls">
+          <button type="button" class="hero-slide-dot is-active" aria-label="Show slide 1"></button>
+          <button type="button" class="hero-slide-dot" aria-label="Show slide 2"></button>
+          <button type="button" class="hero-slide-dot" aria-label="Show slide 3"></button>
+          <button type="button" class="hero-slide-dot" aria-label="Show slide 4"></button>
+        </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px;">
         <div style="padding:12px;background:var(--bg-gray);border-radius:var(--radius);">
@@ -156,7 +182,13 @@
         </div>
       </div>
       <div class="showcase-art reveal-on-scroll">
-        <img src="/images/mobile-dashboard.svg" alt="United Credit Bank mobile dashboard illustration" class="showcase-image float-y">
+        <div class="showcase-stack">
+          <img src="/images/mobileapp.jpg" alt="United Credit Bank mobile dashboard visual" class="showcase-image showcase-primary-image float-y">
+          <div class="showcase-mini-grid">
+            <img src="/images/piggybank.jpg" alt="Savings visual" class="showcase-tile">
+            <img src="/images/walletcards.jpg" alt="Cards visual" class="showcase-tile">
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -294,4 +326,3 @@
 </section>
 
 <%- include('partials/layouts/main-end', { pageScripts }) -%>
-

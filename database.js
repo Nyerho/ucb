@@ -1,11 +1,28 @@
 const Database = require('better-sqlite3');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const bcrypt = require('bcryptjs');
 
-const dbPath = path.join(__dirname, 'database.db');
+const bundledDbPath = path.join(__dirname, 'database.db');
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+function resolveDbPath() {
+  if (!isServerless) {
+    return bundledDbPath;
+  }
+
+  const runtimeDbPath = path.join(os.tmpdir(), 'united-credit-bank.db');
+  if (fs.existsSync(bundledDbPath) && !fs.existsSync(runtimeDbPath)) {
+    fs.copyFileSync(bundledDbPath, runtimeDbPath);
+  }
+
+  return runtimeDbPath;
+}
+
+const dbPath = resolveDbPath();
 const db = new Database(dbPath);
 
-db.pragma('journal_mode = WAL');
+db.pragma(`journal_mode = ${isServerless ? 'DELETE' : 'WAL'}`);
 db.pragma('foreign_keys = ON');
 
 db.exec(`
@@ -240,78 +257,6 @@ function generateCardNumber() {
 
 function generateCVV() {
   return String(Math.floor(100 + Math.random() * 900));
-}
-
-const adminCheck = db.prepare('SELECT COUNT(*) as count FROM users WHERE is_admin = 1');
-if (adminCheck.get().count === 0) {
-  const insertAdmin = db.prepare(`
-    INSERT INTO users (first_name, last_name, email, phone, password, address, city, state, postcode, country, date_of_birth, is_admin, is_verified)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
-  `);
-  const adminHash = bcrypt.hashSync('Admin@2026', 10);
-  const adminResult = insertAdmin.run(
-    'System',
-    'Administrator',
-    'admin@unitedcreditbank.com.au',
-    '02-8000-0001',
-    adminHash,
-    '1 Martin Place',
-    'Sydney',
-    'NSW',
-    '2000',
-    'Australia',
-    '1980-01-01'
-  );
-
-  const adminAccount = db.prepare(`
-    INSERT INTO accounts (user_id, account_number, account_type, account_name, balance, available_balance, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  adminAccount.run(
-    adminResult.lastInsertRowid,
-    generateAccountNumber(),
-    'Admin Account',
-    'System Admin',
-    9999999.99,
-    9999999.99,
-    'active'
-  );
-}
-
-const sampleUserCheck = db.prepare('SELECT COUNT(*) as count FROM users WHERE is_admin = 0');
-if (sampleUserCheck.get().count === 0) {
-  const insertUser = db.prepare(`
-    INSERT INTO users (first_name, last_name, email, phone, password, address, city, state, postcode, country, date_of_birth, is_verified)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-  `);
-  const userHash = bcrypt.hashSync('Customer@2026', 10);
-  const userResult = insertUser.run(
-    'John',
-    'Smith',
-    'john.smith@email.com.au',
-    '0412-345-678',
-    userHash,
-    '123 Bondi Road',
-    'Sydney',
-    'NSW',
-    '2026',
-    'Australia',
-    '1990-05-15'
-  );
-
-  const insertAccount = db.prepare(`
-    INSERT INTO accounts (user_id, account_number, account_type, account_name, balance, available_balance, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  insertAccount.run(
-    userResult.lastInsertRowid,
-    generateAccountNumber(),
-    'Everyday Savings',
-    'John Smith',
-    25000.50,
-    25000.50,
-    'active'
-  );
 }
 
 module.exports = {

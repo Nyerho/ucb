@@ -111,6 +111,21 @@
           </a>
         </div>
 
+        <div class="dashboard-spotlight card">
+          <div class="dashboard-spotlight-media">
+            <img src="/images/herobank.jpg" alt="United Credit Bank banking overview visual">
+          </div>
+          <div class="dashboard-spotlight-copy">
+            <span class="section-eyebrow">Smarter Dashboard</span>
+            <h3>Everything important in one secure view</h3>
+            <p>Track balances, move money, review approvals, and manage your cards with a cleaner digital banking experience built around your daily actions.</p>
+            <div class="dashboard-spotlight-actions">
+              <a href="/transfers" class="btn btn-primary btn-sm">Move Money</a>
+              <a href="/user/settings" class="btn btn-outline btn-sm">Security Settings</a>
+            </div>
+          </div>
+        </div>
+
         <div class="grid-2-1">
           <div>
             <div class="card">
@@ -199,6 +214,23 @@
           </div>
 
           <div>
+            <div class="dashboard-image-strip">
+              <div class="dashboard-image-card">
+                <img src="/images/piggybank.jpg" alt="Savings image">
+                <div class="dashboard-image-copy">
+                  <strong>Savings Growth</strong>
+                  <span>Build reserves with disciplined saving and better visibility.</span>
+                </div>
+              </div>
+              <div class="dashboard-image-card">
+                <img src="/images/growthchart.jpg" alt="Growth image">
+                <div class="dashboard-image-copy">
+                  <strong>Performance View</strong>
+                  <span>Monitor balances, cards, loans, and transaction activity faster.</span>
+                </div>
+              </div>
+            </div>
+
             <% if (cards.length > 0) { %>
               <div class="card" style="margin-bottom:20px;">
                 <div class="card-header">
@@ -281,6 +313,9 @@
             <div class="card">
               <div class="card-header"><h3 class="card-title">🇦🇺 Need Help?</h3></div>
               <div class="card-body">
+                <div class="dashboard-help-visual">
+                  <img src="/images/walletcards.jpg" alt="Wallet and cards image">
+                </div>
                 <div style="padding:14px;background:var(--primary-alpha);border-radius:var(--radius);margin-bottom:12px;">
                   <div style="font-weight:600;font-size:0.9rem;color:var(--primary);">📞 1300 UCBANK</div>
                   <div style="font-size:0.8rem;color:var(--text-gray);">Mon-Fri 8am-8pm AEST</div>
@@ -317,4 +352,3 @@
   <script src="/js/user-dashboard.js"></script>
 </body>
 </html>
-

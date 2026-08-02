@@ -33,6 +33,22 @@ document.addEventListener('DOMContentLoaded', () => {
       })
       .catch(() => {});
   }
+
+  const appSidebar = document.getElementById('appSidebar');
+  if (appSidebar && window.bootstrap?.Offcanvas) {
+    const sidebarInstance = bootstrap.Offcanvas.getOrCreateInstance(appSidebar);
+    const closeSidebarIfMobile = () => {
+      if (window.innerWidth < 992 && appSidebar.classList.contains('show')) {
+        sidebarInstance.hide();
+      }
+    };
+
+    appSidebar.querySelectorAll('.sidebar-link, .sidebar-brand a').forEach(link => {
+      link.addEventListener('click', () => {
+        closeSidebarIfMobile();
+      });
+    });
+  }
 });
 
 function formatCurrency(amount, currency = 'AUD') {

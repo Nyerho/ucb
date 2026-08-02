@@ -2548,14 +2548,29 @@ a:hover {
   .visual-showcase { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 991.98px) {
   .sidebar {
     border-right: 1px solid var(--border);
     border-bottom: none;
     height: 100vh;
   }
   .sidebar.offcanvas-lg {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
     width: min(300px, 86vw);
+    max-width: min(300px, 86vw);
+  }
+  .sidebar.offcanvas-lg.show,
+  .sidebar.offcanvas-lg.showing,
+  .sidebar.offcanvas-lg.hiding {
+    display: flex;
+    flex-direction: column;
+  }
+  .sidebar.offcanvas-lg .sidebar-menu,
+  .sidebar.offcanvas-lg .sidebar-footer {
+    display: block;
   }
   .services-grid { grid-template-columns: 1fr; }
   .testimonials-grid { grid-template-columns: 1fr; }

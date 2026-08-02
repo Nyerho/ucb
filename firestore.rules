@@ -1,0 +1,115 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function adminPath() {
+      return /databases/$(database)/documents/admins/$(request.auth.uid);
+    }
+
+    function isAdmin() {
+      return signedIn() && exists(adminPath());
+    }
+
+    function adminData() {
+      return get(adminPath()).data;
+    }
+
+    function isActiveAdmin() {
+      return isAdmin() && (!('active' in adminData()) || adminData().active == true);
+    }
+
+    function isSuperAdmin() {
+      return isActiveAdmin() && (!('role' in adminData()) || adminData().role == 'super_admin');
+    }
+
+    function validAdminDoc() {
+      return request.resource.data.keys().hasAll([
+        'email',
+        'first_name',
+        'last_name',
+        'phone',
+        'role',
+        'active',
+        'updated_at'
+      ]);
+    }
+
+    function validAdminSettingsDoc() {
+      return request.resource.data.keys().hasAll([
+        'approval_threshold',
+        'bill_payment_approval',
+        'withdrawal_auto_approval',
+        'deposit_review_limit',
+        'intl_transfer_fee',
+        'updated_at',
+        'updated_by'
+      ]);
+    }
+
+    match /admins/{adminId} {
+      allow read: if isActiveAdmin();
+      allow create: if isSuperAdmin() && validAdminDoc();
+      allow update: if isSuperAdmin() && validAdminDoc();
+      allow delete: if isSuperAdmin() && adminId != request.auth.uid;
+    }
+
+    match /adminSettings/{settingId} {
+      allow read: if isActiveAdmin();
+      allow create, update: if isSuperAdmin() && validAdminSettingsDoc();
+      allow delete: if false;
+    }
+
+    match /users/{userId} {
+      allow read, create, update: if isActiveAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /accounts/{accountId} {
+      allow read, create, update: if isActiveAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /transactions/{transactionId} {
+      allow read, create, update: if isActiveAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /cards/{cardId} {
+      allow read, create, update: if isActiveAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /loans/{loanId} {
+      allow read, create, update: if isActiveAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /kyc/{kycId} {
+      allow read, create, update: if isActiveAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /billPayments/{paymentId} {
+      allow read, create, update: if isActiveAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /beneficiaries/{beneficiaryId} {
+      allow read, create, update: if isActiveAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read, create, update: if isActiveAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow read, create: if isActiveAdmin();
+      allow update, delete: if false;
+    }
+  }
+}

@@ -1,4 +1,5 @@
 const Database = require('better-sqlite3');
+const bcrypt = require('bcryptjs');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -241,6 +242,86 @@ function ensureColumn(tableName, columnName, definition) {
 
 ensureColumn('users', 'transfer_pin_hash', 'TEXT');
 ensureColumn('users', 'transfer_pin_updated_at', 'DATETIME');
+ensureColumn('users', 'role', "TEXT DEFAULT 'admin'");
+ensureColumn('users', 'last_login', 'DATETIME');
+
+function getConfiguredAdmin() {
+  const email = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  const password = process.env.ADMIN_PASSWORD || '';
+
+  if (!email || !password) {
+    return null;
+  }
+
+  return {
+    email,
+    password,
+    first_name: (process.env.ADMIN_FIRST_NAME || 'System').trim() || 'System',
+    last_name: (process.env.ADMIN_LAST_NAME || 'Administrator').trim() || 'Administrator',
+    phone: (process.env.ADMIN_PHONE || '02-8000-0001').trim() || '02-8000-0001',
+    role: (process.env.ADMIN_ROLE || 'super_admin').trim() || 'super_admin'
+  };
+}
+
+function ensureConfiguredAdmin() {
+  const admin = getConfiguredAdmin();
+  if (!admin) {
+    return;
+  }
+
+  const passwordHash = bcrypt.hashSync(admin.password, 10);
+  const existingByEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(admin.email);
+
+  if (existingByEmail) {
+    db.prepare(`
+      UPDATE users
+      SET first_name = ?, last_name = ?, phone = ?, password = ?, is_admin = 1,
+          is_verified = 1, role = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      admin.first_name,
+      admin.last_name,
+      admin.phone,
+      passwordHash,
+      admin.role,
+      existingByEmail.id
+    );
+    return;
+  }
+
+  const existingAdmin = db.prepare('SELECT id FROM users WHERE is_admin = 1 ORDER BY id LIMIT 1').get();
+  if (existingAdmin) {
+    db.prepare(`
+      UPDATE users
+      SET first_name = ?, last_name = ?, email = ?, phone = ?, password = ?, is_admin = 1,
+          is_verified = 1, role = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      admin.first_name,
+      admin.last_name,
+      admin.email,
+      admin.phone,
+      passwordHash,
+      admin.role,
+      existingAdmin.id
+    );
+    return;
+  }
+
+  db.prepare(`
+    INSERT INTO users (first_name, last_name, email, phone, password, is_admin, is_verified, role)
+    VALUES (?, ?, ?, ?, ?, 1, 1, ?)
+  `).run(
+    admin.first_name,
+    admin.last_name,
+    admin.email,
+    admin.phone,
+    passwordHash,
+    admin.role
+  );
+}
+
+ensureConfiguredAdmin();
 
 function generateAccountNumber() {
   return '200' + Math.random().toString().slice(2, 10);

@@ -12,6 +12,15 @@ const { db } = require('./database');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const firebaseWebConfig = {
+  apiKey: process.env.FIREBASE_API_KEY || 'AIzaSyDGSYkZdTDDj_ucCKjkiC-8WejvdnrVfSQ',
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || 'unitedcb-4845b.firebaseapp.com',
+  projectId: process.env.FIREBASE_PROJECT_ID || 'unitedcb-4845b',
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'unitedcb-4845b.firebasestorage.app',
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || '54110165279',
+  appId: process.env.FIREBASE_APP_ID || '1:54110165279:web:04ddda35bfc2624f87b82a',
+  measurementId: process.env.FIREBASE_MEASUREMENT_ID || 'G-HWYB1Q883J'
+};
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
@@ -55,6 +64,7 @@ app.use((req, res, next) => {
   res.locals.user = req.session.user || null;
   res.locals.error = req.session.error || null;
   res.locals.success = req.session.success || null;
+  res.locals.firebaseWebConfig = firebaseWebConfig;
   delete req.session.error;
   delete req.session.success;
   next();

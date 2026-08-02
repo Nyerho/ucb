@@ -127,6 +127,8 @@ router.post('/login', async (req, res) => {
     return res.redirect('/auth/login');
   }
 
+  db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+
   req.session.userId = user.id;
   req.session.user = {
     id: user.id,

@@ -1,5 +1,5 @@
 const { db } = require('../database');
-const { getFirestore, hasAdminCredentials } = require('../lib/firebase-admin');
+const { getFirestore, hasAdminCredentials, logFirestoreDiagnostics, getResolvedProjectId } = require('../lib/firebase-admin');
 
 const USERS_COLLECTION = process.env.FIRESTORE_USERS_COLLECTION || 'users';
 const ACCOUNTS_COLLECTION = process.env.FIRESTORE_ACCOUNTS_COLLECTION || 'accounts';
@@ -7,7 +7,11 @@ const ADMINS_COLLECTION = process.env.FIREBASE_ADMIN_COLLECTION || 'admins';
 const ADMIN_DOC_ID = process.env.FIREBASE_ADMIN_DOC_ID || null;
 
 function isFirestoreEnabled() {
-  return hasAdminCredentials() && Boolean(getFirestore());
+  const enabled = hasAdminCredentials() && Boolean(getFirestore());
+  if (!enabled) {
+    logFirestoreDiagnostics();
+  }
+  return enabled;
 }
 
 function normalizeDateString(value) {
@@ -269,32 +273,45 @@ async function syncUserBundleToFirestore(userId) {
   const accounts = db.prepare('SELECT * FROM accounts WHERE user_id = ?').all(userId);
 
   const batch = firestore.batch();
-  batch.set(
-    firestore.collection(USERS_COLLECTION).doc(String(user.id)),
-    toFirestoreUser(user),
-    { merge: true }
-  );
+  const userDocRef = firestore.collection(USERS_COLLECTION).doc(String(user.id));
+  batch.set(userDocRef, toFirestoreUser(user), { merge: true });
 
+  const accountDocRefs = [];
   for (const account of accounts) {
-    batch.set(
-      firestore.collection(ACCOUNTS_COLLECTION).doc(String(account.id)),
-      toFirestoreAccount(account),
-      { merge: true }
-    );
+    const accountRef = firestore.collection(ACCOUNTS_COLLECTION).doc(String(account.id));
+    accountDocRefs.push(accountRef);
+    batch.set(accountRef, toFirestoreAccount(account), { merge: true });
   }
 
   await batch.commit();
 
-  const [userDoc, accountDoc] = await Promise.all([
-    firestore.collection(USERS_COLLECTION).doc(String(user.id)).get(),
-    accounts.length
-      ? firestore.collection(ACCOUNTS_COLLECTION).doc(String(accounts[0].id)).get()
-      : Promise.resolve({ exists: true })
-  ]);
+  const verifyPromises = [
+    userDocRef.get().then((doc) => {
+      if (!doc.exists) {
+        throw new Error(`User doc not found in Firestore after sync: users/${user.id}`);
+      }
+      return doc;
+    })
+  ];
 
-  if (!userDoc.exists || !accountDoc.exists) {
-    throw new Error('Firestore registration sync verification failed.');
+  for (const accountRef of accountDocRefs) {
+    verifyPromises.push(
+      accountRef.get().then((doc) => {
+        if (!doc.exists) {
+          throw new Error(`Account doc not found in Firestore after sync: accounts/${accountRef.id}`);
+        }
+        return doc;
+      })
+    );
   }
+
+  await Promise.all(verifyPromises);
+
+  console.log(
+    `[firestore-sync] Synced user ${user.id} (${user.email}) ` +
+    `+ ${accounts.length} account(s) to Firestore project "${getResolvedProjectId()}" ` +
+    `-> collection "${USERS_COLLECTION}"`
+  );
 
   return true;
 }
@@ -468,6 +485,47 @@ async function getFirestoreDashboardCustomerStats() {
   };
 }
 
+async function backfillLocalUsersToFirestore(limit = 500) {
+  const firestore = getFirestore();
+  if (!firestore) {
+    console.warn('[firestore-sync] backfillLocalUsersToFirestore: Firestore not available, skipping backfill.');
+    return { synced: 0, skipped: 0, errors: 0, total: 0 };
+  }
+
+  const localUsers = db.prepare(
+    'SELECT * FROM users ORDER BY id ASC LIMIT ?'
+  ).all(limit);
+
+  const stats = { synced: 0, skipped: 0, errors: 0, total: localUsers.length };
+  console.log(`[firestore-sync] Starting backfill of ${localUsers.length} local user(s) to Firestore...`);
+
+  for (const user of localUsers) {
+    try {
+      const docRef = firestore.collection(USERS_COLLECTION).doc(String(user.id));
+      const existing = await docRef.get();
+      if (existing.exists) {
+        stats.skipped++;
+        continue;
+      }
+      const ok = await syncUserBundleToFirestore(user.id);
+      if (ok) {
+        stats.synced++;
+      } else {
+        stats.errors++;
+      }
+    } catch (err) {
+      stats.errors++;
+      console.error(`[firestore-sync] Backfill failed for user ${user.id} (${user.email}):`, err.message);
+    }
+  }
+
+  console.log(
+    `[firestore-sync] Backfill complete. Total: ${stats.total}, ` +
+    `Synced: ${stats.synced}, Already present: ${stats.skipped}, Errors: ${stats.errors}`
+  );
+  return stats;
+}
+
 module.exports = {
   isFirestoreEnabled,
   syncUserToFirestore,
@@ -478,5 +536,6 @@ module.exports = {
   hydrateUserFromFirestoreById,
   hydrateRecentCustomersFromFirestore,
   firestoreUserExistsByEmail,
-  getFirestoreDashboardCustomerStats
+  getFirestoreDashboardCustomerStats,
+  backfillLocalUsersToFirestore
 };

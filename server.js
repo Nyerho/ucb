@@ -12,17 +12,20 @@ const { db } = require('./database');
 const {
   hydrateUserFromFirestoreById,
   isFirestoreEnabled,
-  syncConfiguredAdminToFirestore
+  syncConfiguredAdminToFirestore,
+  backfillLocalUsersToFirestore
 } = require('./services/firestore-sync');
+const { logFirestoreDiagnostics, getFirestoreAdminDiagnostics, getResolvedProjectId } = require('./lib/firebase-admin');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const RESOLVED_FIREBASE_PROJECT_ID = getResolvedProjectId();
 const firebaseWebConfig = {
   apiKey: process.env.FIREBASE_API_KEY || 'AIzaSyDGSYkZdTDDj_ucCKjkiC-8WejvdnrVfSQ',
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN || 'unitedcb-4845b.firebaseapp.com',
-  projectId: process.env.FIREBASE_PROJECT_ID || 'unitedcb-4845b',
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || 'unitedcb-4845b.firebasestorage.app',
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || `${RESOLVED_FIREBASE_PROJECT_ID}.firebaseapp.com`,
+  projectId: RESOLVED_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || `${RESOLVED_FIREBASE_PROJECT_ID}.firebasestorage.app`,
   messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || '54110165279',
   appId: process.env.FIREBASE_APP_ID || '1:54110165279:web:04ddda35bfc2624f87b82a',
   measurementId: process.env.FIREBASE_MEASUREMENT_ID || 'G-HWYB1Q883J'
@@ -68,11 +71,54 @@ if (isServerless) {
   app.use(session(sessionConfig));
 }
 
-if (isFirestoreEnabled()) {
-  syncConfiguredAdminToFirestore().catch((error) => {
-    console.error('Failed to sync configured admin to Firestore:', error);
-  });
-}
+(function runFirestoreStartupCheck() {
+  console.log('\n============================================================');
+  console.log('  UNITED CREDIT BANK - FIRESTORE STARTUP CHECK');
+  console.log('============================================================');
+  const diag = getFirestoreAdminDiagnostics();
+  console.log(`  Project ID:        ${diag.projectIdResolved}`);
+  console.log(`  Admin creds ready: ${diag.hasAdminCredentials ? 'YES' : 'NO'}`);
+  console.log(`  Client email set:  ${diag.clientEmailSet ? 'YES' : 'NO'}`);
+  console.log(`  Private key set:   ${diag.privateKeySet ? `YES (${diag.privateKeyLength} chars)` : 'NO'}`);
+  console.log(`  Init error:        ${diag.initError ? diag.initError.split('\n')[0] : 'none'}`);
+
+  const enabled = isFirestoreEnabled();
+  console.log(`  Firestore enabled: ${enabled ? 'YES' : 'NO'}`);
+
+  if (!enabled) {
+    console.log('------------------------------------------------------------');
+    console.log('  ⚠️   WARNING: FIRESTORE ADMIN IS NOT CONFIGURED!');
+    console.log('  ----------------------------------------------------------');
+    console.log('  User registration will still work locally (SQLite), but');
+    console.log('  users/accounts WILL NOT be synced to Firestore/Firebase.');
+    console.log('');
+    console.log('  To enable Firestore sync, add these to your .env file:');
+    console.log('');
+    console.log('  FIREBASE_CLIENT_EMAIL=<your-service-account-email>');
+    console.log('  FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----');
+    console.log('    ...your full private key...');
+    console.log('    -----END PRIVATE KEY-----"');
+    console.log('');
+    console.log('  Get these from: Firebase Console → Project Settings →');
+    console.log('  Service Accounts → Generate new private key (JSON)');
+    console.log('');
+    console.log('  Optional: Set FIRESTORE_REQUIRE_SYNC_ON_REGISTER=true');
+    console.log('  to FAIL registration if Firestore is unavailable.');
+    console.log('============================================================\n');
+  } else {
+    console.log(`  Firestore ready for project "${diag.projectIdResolved}"`);
+    console.log('============================================================\n');
+    syncConfiguredAdminToFirestore().catch((error) => {
+      console.error('Failed to sync configured admin to Firestore:', error);
+    });
+    const shouldBackfill = process.env.FIRESTORE_SKIP_STARTUP_BACKFILL !== 'true';
+    if (shouldBackfill) {
+      backfillLocalUsersToFirestore(500).catch((error) => {
+        console.error('Firestore startup backfill failed:', error);
+      });
+    }
+  }
+})();
 
 app.use((req, res, next) => {
   res.locals.moment = moment;

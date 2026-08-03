@@ -116,7 +116,11 @@ router.post('/register', [
     'active'
   );
 
+  let firestoreSyncAttempted = false;
+  let firestoreSyncSkipped = false;
+
   if (isFirestoreEnabled()) {
+    firestoreSyncAttempted = true;
     try {
       const synced = await syncUserBundleToFirestore(result.lastInsertRowid);
       if (!synced) {
@@ -133,9 +137,35 @@ router.post('/register', [
         old: req.body
       });
     }
+  } else {
+    firestoreSyncSkipped = true;
+    console.warn(
+      '============================================================\n' +
+      '  [AUTH REGISTER] WARNING: FIRESTORE SYNC SKIPPED\n' +
+      '  User was registered locally (SQLite) but NOT synced to Firestore.\n' +
+      '  This means the user will NOT appear in Firebase Console.\n' +
+      '  User ID: ' + result.lastInsertRowid + '\n' +
+      '  Email: ' + normalizedEmail + '\n' +
+      '  To fix this, set FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY\n' +
+      '  in your .env file (see diagnostic log above for details).\n' +
+      '============================================================'
+    );
   }
 
-  req.session.success = 'Account created successfully! Please login to continue.';
+  if (firestoreSyncSkipped && process.env.FIRESTORE_REQUIRE_SYNC_ON_REGISTER === 'true') {
+    db.prepare('DELETE FROM accounts WHERE user_id = ?').run(result.lastInsertRowid);
+    db.prepare('DELETE FROM users WHERE id = ?').run(result.lastInsertRowid);
+    req.session.error = 'Account creation could not be completed right now. The remote user database is unavailable. Please try again later.';
+    return res.render('auth/register', {
+      title: 'Open Account - United Credit Bank',
+      page: 'register',
+      old: req.body
+    });
+  }
+
+  req.session.success = firestoreSyncSkipped
+    ? 'Account created locally! Note: Remote sync is currently unavailable. Your account will be synced when the service is restored. Please login to continue.'
+    : 'Account created successfully! Please login to continue.';
   res.redirect('/auth/login');
 });
 

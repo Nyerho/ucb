@@ -40,6 +40,21 @@ function toFirestoreDate(value) {
   return iso ? new Date(iso) : new Date();
 }
 
+function normalizeAdminFlag(value) {
+  return asInt(value) === 1 ? 1 : 0;
+}
+
+function normalizeUserRole(user) {
+  const isAdmin = normalizeAdminFlag(user && user.is_admin) === 1;
+  const role = String((user && user.role) || '').trim().toLowerCase();
+
+  if (isAdmin) {
+    return role && role !== 'customer' ? role : 'super_admin';
+  }
+
+  return 'customer';
+}
+
 function asInt(value, fallback = 0) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -51,6 +66,8 @@ function asFloat(value, fallback = 0) {
 }
 
 function toFirestoreUser(user) {
+  const isAdmin = normalizeAdminFlag(user.is_admin);
+
   return {
     sql_id: asInt(user.id),
     first_name: user.first_name || '',
@@ -65,10 +82,10 @@ function toFirestoreUser(user) {
     country: user.country || 'Australia',
     date_of_birth: user.date_of_birth || null,
     profile_image: user.profile_image || '',
-    is_admin: asInt(user.is_admin),
+    is_admin: isAdmin,
     is_verified: asInt(user.is_verified),
     is_frozen: asInt(user.is_frozen),
-    role: user.role || (asInt(user.is_admin) === 1 ? 'super_admin' : 'customer'),
+    role: normalizeUserRole(user),
     transfer_pin_hash: user.transfer_pin_hash || '',
     transfer_pin_updated_at: normalizeDateString(user.transfer_pin_updated_at),
     last_login: normalizeDateString(user.last_login),
@@ -108,6 +125,8 @@ function upsertLocalUser(userDoc, explicitId) {
     return null;
   }
 
+  const isAdmin = normalizeAdminFlag(userDoc.is_admin);
+
   const payload = {
     id: userId,
     first_name: userDoc.first_name || '',
@@ -122,12 +141,12 @@ function upsertLocalUser(userDoc, explicitId) {
     country: userDoc.country || 'Australia',
     date_of_birth: userDoc.date_of_birth || null,
     profile_image: userDoc.profile_image || '',
-    is_admin: asInt(userDoc.is_admin),
+    is_admin: isAdmin,
     is_verified: asInt(userDoc.is_verified),
     is_frozen: asInt(userDoc.is_frozen),
     created_at: toSqlDateTime(userDoc.created_at) || toSqlDateTime(new Date()),
     updated_at: toSqlDateTime(userDoc.updated_at) || toSqlDateTime(new Date()),
-    role: userDoc.role || 'customer',
+    role: normalizeUserRole(userDoc),
     transfer_pin_hash: userDoc.transfer_pin_hash || null,
     transfer_pin_updated_at: toSqlDateTime(userDoc.transfer_pin_updated_at),
     last_login: toSqlDateTime(userDoc.last_login)
@@ -387,6 +406,30 @@ async function hydrateAccountsForUser(userId) {
   return accounts.filter(Boolean);
 }
 
+async function hydrateRecentCustomersFromFirestore(limit = 200) {
+  const firestore = getFirestore();
+  if (!firestore) {
+    return [];
+  }
+
+  const snapshot = await firestore.collection(USERS_COLLECTION)
+    .where('is_admin', '==', 0)
+    .orderBy('created_at_ts', 'desc')
+    .limit(limit)
+    .get();
+
+  const users = [];
+  for (const doc of snapshot.docs) {
+    const localUser = upsertLocalUser(doc.data(), doc.id);
+    if (localUser) {
+      users.push(localUser);
+      await hydrateAccountsForUser(localUser.id);
+    }
+  }
+
+  return users;
+}
+
 async function getFirestoreDashboardCustomerStats() {
   const firestore = getFirestore();
   if (!firestore) {
@@ -433,6 +476,7 @@ module.exports = {
   syncConfiguredAdminToFirestore,
   hydrateUserFromFirestoreByEmail,
   hydrateUserFromFirestoreById,
+  hydrateRecentCustomersFromFirestore,
   firestoreUserExistsByEmail,
   getFirestoreDashboardCustomerStats
 };

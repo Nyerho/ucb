@@ -9,6 +9,8 @@ const {
 } = require('../middleware/auth');
 const {
   getFirestoreDashboardCustomerStats,
+  hydrateRecentCustomersFromFirestore,
+  hydrateUserFromFirestoreById,
   isFirestoreEnabled,
   syncUserBundleToFirestore
 } = require('../services/firestore-sync');
@@ -49,6 +51,37 @@ function buildCustomerScope(extraConditions = '') {
     )
     ${extraConditions}
   `;
+}
+
+async function hydrateAdminCustomerDirectory() {
+  if (!isFirestoreEnabled()) {
+    return;
+  }
+
+  try {
+    await hydrateRecentCustomersFromFirestore(200);
+  } catch (error) {
+    console.error('Failed to hydrate admin customer directory from Firestore:', error);
+  }
+}
+
+async function findAdminCustomerById(userId) {
+  let user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  if (user) {
+    return user;
+  }
+
+  if (!isFirestoreEnabled()) {
+    return null;
+  }
+
+  try {
+    user = await hydrateUserFromFirestoreById(userId);
+  } catch (error) {
+    console.error('Failed to hydrate admin user from Firestore:', error);
+  }
+
+  return user || null;
 }
 
 function getTransactionImpact(txn) {
@@ -314,22 +347,24 @@ router.get('/dashboard', requireAdmin, async (req, res) => {
   });
 });
 
-router.get('/users', requireAdmin, (req, res) => {
+router.get('/users', requireAdmin, async (req, res) => {
   const { search, status, verified } = req.query;
-  let query = 'SELECT * FROM users WHERE is_admin = 0';
+  await hydrateAdminCustomerDirectory();
+
+  let query = `SELECT u.* ${buildCustomerScope()}`;
   const params = [];
 
   if (search) {
-    query += ' AND (first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR phone LIKE ?)';
+    query += ' AND (u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)';
     const searchTerm = `%${search}%`;
     params.push(searchTerm, searchTerm, searchTerm, searchTerm);
   }
-  if (status === 'frozen') query += ' AND is_frozen = 1';
-  if (status === 'active') query += ' AND is_frozen = 0';
-  if (verified === 'verified') query += ' AND is_verified = 1';
-  if (verified === 'unverified') query += ' AND is_verified = 0';
+  if (status === 'frozen') query += ' AND COALESCE(u.is_frozen, 0) = 1';
+  if (status === 'active') query += ' AND COALESCE(u.is_frozen, 0) = 0';
+  if (verified === 'verified') query += ' AND COALESCE(u.is_verified, 0) = 1';
+  if (verified === 'unverified') query += ' AND COALESCE(u.is_verified, 0) = 0';
 
-  query += ' ORDER BY created_at DESC LIMIT 200';
+  query += ' ORDER BY u.created_at DESC LIMIT 200';
   const users = db.prepare(query).all(...params);
 
   users.forEach(u => {
@@ -356,8 +391,9 @@ router.get('/users/create', requireAdmin, (req, res) => {
 
 router.post('/users/create', requireAdmin, async (req, res) => {
   const { first_name, last_name, email, phone, password, address, city, state, postcode, date_of_birth, initial_balance, account_type, is_verified } = req.body;
+  const normalizedEmail = String(email || '').trim().toLowerCase();
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(normalizedEmail);
   if (existing) {
     req.session.error = 'Email already exists.';
     return res.redirect('/admin/users/create');
@@ -366,10 +402,13 @@ router.post('/users/create', requireAdmin, async (req, res) => {
   const hashedPassword = await bcrypt.hash(password || 'TempPass2026!', 10);
   const tx = db.transaction(() => {
     const insertUser = db.prepare(`
-      INSERT INTO users (first_name, last_name, email, phone, password, address, city, state, postcode, date_of_birth, is_verified)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (
+        first_name, last_name, email, phone, password, address, city, state, postcode, date_of_birth,
+        is_admin, is_verified, is_frozen, role
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 'customer')
     `);
-    const result = insertUser.run(first_name, last_name, email, phone, hashedPassword, address || '', city || '', state || '', postcode || '', date_of_birth || null, is_verified ? 1 : 0);
+    const result = insertUser.run(first_name, last_name, normalizedEmail, phone, hashedPassword, address || '', city || '', state || '', postcode || '', date_of_birth || null, is_verified ? 1 : 0);
 
     const accNum = generateAccountNumber();
     db.prepare(`
@@ -390,15 +429,15 @@ router.post('/users/create', requireAdmin, async (req, res) => {
       return res.redirect(`/admin/users/${userId}`);
     }
   }
-  addAuditLog(req.session.userId, 'CREATE_USER', 'user', userId, `Created user: ${first_name} ${last_name} (${email})`, req.ip);
+  addAuditLog(req.session.userId, 'CREATE_USER', 'user', userId, `Created user: ${first_name} ${last_name} (${normalizedEmail})`, req.ip);
   addNotification(userId, 'Account Created', 'Your United Credit Bank account has been created by an administrator.', 'success');
 
   req.session.success = `User ${first_name} ${last_name} created successfully.`;
   res.redirect(`/admin/users/${userId}`);
 });
 
-router.get('/users/:id', requireAdmin, (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+router.get('/users/:id', requireAdmin, async (req, res) => {
+  const user = await findAdminCustomerById(req.params.id);
   if (!user) {
     req.session.error = 'User not found.';
     return res.redirect('/admin/users');
@@ -448,6 +487,12 @@ router.post('/users/:id/update', requireAdmin, async (req, res) => {
   const { first_name, last_name, email, phone, address, city, state, postcode, country, date_of_birth, is_verified, is_frozen } = req.body;
   const userId = req.params.id;
 
+  const existingUser = await findAdminCustomerById(userId);
+  if (!existingUser) {
+    req.session.error = 'User not found.';
+    return res.redirect('/admin/users');
+  }
+
   const existingEmail = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, userId);
   if (existingEmail) {
     req.session.error = 'Email already in use.';
@@ -482,7 +527,7 @@ router.post('/users/:id/update', requireAdmin, async (req, res) => {
 
 router.post('/users/:id/freeze', requireAdmin, async (req, res) => {
   const userId = req.params.id;
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  const user = await findAdminCustomerById(userId);
   if (!user) {
     return res.json({ success: false, message: 'User not found' });
   }
@@ -507,7 +552,7 @@ router.post('/users/:id/freeze', requireAdmin, async (req, res) => {
 
 router.get('/users/:id/freeze', requireAdmin, async (req, res) => {
   const userId = req.params.id;
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  const user = await findAdminCustomerById(userId);
   if (!user) {
     req.session.error = 'User not found.';
     return res.redirect('/admin/users');
@@ -536,6 +581,12 @@ router.post('/users/:id/reset-password', requireAdmin, async (req, res) => {
   const { password } = req.body;
   const userId = req.params.id;
 
+  const existingUser = await findAdminCustomerById(userId);
+  if (!existingUser) {
+    req.session.error = 'User not found.';
+    return res.redirect('/admin/users');
+  }
+
   if (!password || password.length < 8) {
     req.session.error = 'Password must be at least 8 characters.';
     return res.redirect(`/admin/users/${userId}`);
@@ -560,14 +611,19 @@ router.post('/users/:id/reset-password', requireAdmin, async (req, res) => {
   res.redirect(`/admin/users/${userId}`);
 });
 
-router.post('/users/:id/delete', requireAdmin, (req, res) => {
+router.post('/users/:id/delete', requireAdmin, async (req, res) => {
   const userId = req.params.id;
   if (userId == req.session.userId) {
     req.session.error = 'Cannot delete your own account.';
     return res.redirect(`/admin/users/${userId}`);
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  const user = await findAdminCustomerById(userId);
+  if (!user) {
+    req.session.error = 'User not found.';
+    return res.redirect('/admin/users');
+  }
+
   db.prepare('DELETE FROM users WHERE id = ?').run(userId);
   addAuditLog(req.session.userId, 'DELETE_USER', 'user', userId, `Deleted user: ${user.first_name} ${user.last_name} (${user.email})`, req.ip);
 
@@ -575,10 +631,15 @@ router.post('/users/:id/delete', requireAdmin, (req, res) => {
   res.redirect('/admin/users');
 });
 
-router.post('/users/:id/accounts/create', requireAdmin, (req, res) => {
+router.post('/users/:id/accounts/create', requireAdmin, async (req, res) => {
   const userId = req.params.id;
   const { account_type, initial_balance, branch, bsb } = req.body;
-  const user = db.prepare('SELECT first_name, last_name FROM users WHERE id = ?').get(userId);
+  const user = await findAdminCustomerById(userId);
+  if (!user) {
+    req.session.error = 'User not found.';
+    return res.redirect('/admin/users');
+  }
+
   const accNum = generateAcc();
 
   db.prepare(`

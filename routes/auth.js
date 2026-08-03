@@ -84,8 +84,11 @@ router.post('/register', [
   const hashedPassword = await bcrypt.hash(password, 10);
 
   const insertUser = db.prepare(`
-    INSERT INTO users (first_name, last_name, email, phone, password, address, city, state, postcode, date_of_birth)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO users (
+      first_name, last_name, email, phone, password, address, city, state, postcode, date_of_birth,
+      is_admin, is_verified, is_frozen, role
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'customer')
   `);
   const result = insertUser.run(
     first_name.trim(),
@@ -138,7 +141,7 @@ router.post('/register', [
 
 router.get('/login', (req, res) => {
   if (req.session.userId) {
-    if (req.session.user && req.session.user.is_admin === 1) {
+    if (req.session.user && Number(req.session.user.is_admin) === 1) {
       return res.redirect('/admin/dashboard');
     }
     return res.redirect('/user/dashboard');
@@ -193,17 +196,19 @@ router.post('/login', async (req, res) => {
   }
 
   req.session.userId = user.id;
+  const isAdmin = Number(user.is_admin) === 1 ? 1 : 0;
+
   req.session.user = {
     id: user.id,
     first_name: user.first_name,
     last_name: user.last_name,
     email: user.email,
-    is_admin: user.is_admin,
-    is_verified: user.is_verified,
-    is_frozen: user.is_frozen
+    is_admin: isAdmin,
+    is_verified: Number(user.is_verified) === 1 ? 1 : 0,
+    is_frozen: Number(user.is_frozen) === 1 ? 1 : 0
   };
 
-  if (user.is_admin === 1) {
+  if (isAdmin === 1) {
     return res.redirect('/admin/dashboard');
   }
   res.redirect('/user/dashboard');

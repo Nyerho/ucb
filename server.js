@@ -102,15 +102,17 @@ app.use(async (req, res, next) => {
       }
     }
     if (user) {
+      const isAdmin = Number(user.is_admin) === 1 ? 1 : 0;
+
       req.user = user;
       req.session.user = {
         id: user.id,
         first_name: user.first_name,
         last_name: user.last_name,
         email: user.email,
-        is_admin: user.is_admin,
-        is_verified: user.is_verified,
-        is_frozen: user.is_frozen
+        is_admin: isAdmin,
+        is_verified: Number(user.is_verified) === 1 ? 1 : 0,
+        is_frozen: Number(user.is_frozen) === 1 ? 1 : 0
       };
     } else {
       req.session.user = null;

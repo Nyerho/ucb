@@ -242,8 +242,35 @@ function ensureColumn(tableName, columnName, definition) {
 
 ensureColumn('users', 'transfer_pin_hash', 'TEXT');
 ensureColumn('users', 'transfer_pin_updated_at', 'DATETIME');
-ensureColumn('users', 'role', "TEXT DEFAULT 'admin'");
+ensureColumn('users', 'role', "TEXT DEFAULT 'customer'");
 ensureColumn('users', 'last_login', 'DATETIME');
+
+// Repair legacy rows where customer records inherited an admin role default.
+db.prepare(`
+  UPDATE users
+  SET
+    is_admin = CASE WHEN COALESCE(is_admin, 0) = 1 THEN 1 ELSE 0 END,
+    is_verified = CASE
+      WHEN COALESCE(is_admin, 0) = 1 THEN 1
+      ELSE COALESCE(is_verified, 0)
+    END,
+    is_frozen = COALESCE(is_frozen, 0),
+    role = CASE
+      WHEN COALESCE(is_admin, 0) = 1 THEN
+        CASE
+          WHEN role IS NULL OR TRIM(role) = '' OR LOWER(TRIM(role)) = 'customer' THEN 'super_admin'
+          ELSE role
+        END
+      ELSE 'customer'
+    END,
+    updated_at = CURRENT_TIMESTAMP
+  WHERE
+    is_admin IS NULL
+    OR is_verified IS NULL
+    OR is_frozen IS NULL
+    OR (COALESCE(is_admin, 0) = 0 AND (role IS NULL OR TRIM(role) = '' OR LOWER(TRIM(role)) IN ('admin', 'super_admin')))
+    OR (COALESCE(is_admin, 0) = 1 AND (role IS NULL OR TRIM(role) = '' OR LOWER(TRIM(role)) = 'customer'))
+`).run();
 
 const DEFAULT_ADMIN = {
   email: 'admin@unitedcreditbank.xyz',

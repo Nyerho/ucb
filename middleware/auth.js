@@ -23,7 +23,7 @@ function requireAdmin(req, res, next) {
     req.session.error = 'Please login to access this page.';
     return res.redirect('/auth/login');
   }
-  if (!req.session.user || req.session.user.is_admin !== 1) {
+  if (!req.session.user || Number(req.session.user.is_admin) !== 1) {
     req.session.error = 'Access denied. Admin privileges required.';
     return res.redirect('/user/dashboard');
   }

@@ -118,18 +118,30 @@ router.post('/register', [
 
   let firestoreSyncAttempted = false;
   let firestoreSyncSkipped = false;
+  const vercelDeployment = Boolean(process.env.VERCEL);
+  const requestTag = `[UCB-REGISTER][${normalizedEmail}][sql_user=${result.lastInsertRowid}]`;
+
+  console.log(`${requestTag} step=local_sqlite_insert status=ok account_number=${accountNumber} serverless=${vercelDeployment}`);
 
   if (isFirestoreEnabled()) {
     firestoreSyncAttempted = true;
+    console.log(`${requestTag} step=firestore_sync status=attempting`);
     try {
       const synced = await syncUserBundleToFirestore(result.lastInsertRowid);
       if (!synced) {
-        throw new Error('Firestore sync did not complete.');
+        throw new Error('Firestore sync did not complete (syncUserBundleToFirestore returned falsy).');
       }
+      console.log(`${requestTag} step=firestore_sync status=ok`);
     } catch (error) {
-      console.error('Failed to sync registered user to Firestore:', error);
-      db.prepare('DELETE FROM accounts WHERE user_id = ?').run(result.lastInsertRowid);
-      db.prepare('DELETE FROM users WHERE id = ?').run(result.lastInsertRowid);
+      console.error(`${requestTag} step=firestore_sync status=FAILED error=${String(error.message || error)}`);
+      console.error(`${requestTag} rolling_back_local_sqlite ...`);
+      try {
+        db.prepare('DELETE FROM accounts WHERE user_id = ?').run(result.lastInsertRowid);
+        db.prepare('DELETE FROM users WHERE id = ?').run(result.lastInsertRowid);
+        console.error(`${requestTag} rolling_back_local_sqlite status=ok`);
+      } catch (rbErr) {
+        console.error(`${requestTag} rolling_back_local_sqlite status=FAILED err=${String(rbErr.message || rbErr)}`);
+      }
       req.session.error = 'Account creation could not be completed right now. Please try again.';
       return res.render('auth/register', {
         title: 'Open Account - United Credit Bank',
@@ -139,6 +151,10 @@ router.post('/register', [
     }
   } else {
     firestoreSyncSkipped = true;
+    console.warn(`${requestTag} step=firestore_sync status=SKIPPED reason=isFirestoreEnabled() returned false`);
+    if (vercelDeployment) {
+      console.warn(`${requestTag} VERCEL FIX: Visit https://<your-domain>/api/debug/firestore to see exactly which env var is invalid (private_key_valid / client_email etc). Then Vercel Dashboard → Settings → Environment Variables → set correctly → Redeploy.`);
+    }
     console.warn(
       '============================================================\n' +
       '  [AUTH REGISTER] WARNING: FIRESTORE SYNC SKIPPED\n' +
@@ -146,13 +162,15 @@ router.post('/register', [
       '  This means the user will NOT appear in Firebase Console.\n' +
       '  User ID: ' + result.lastInsertRowid + '\n' +
       '  Email: ' + normalizedEmail + '\n' +
-      '  To fix this, set FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY\n' +
-      '  in your .env file (see diagnostic log above for details).\n' +
+      (vercelDeployment
+        ? '  VERCEL FIX: Visit /api/debug/firestore on your deployed site for the exact env var validation errors.\n'
+        : '  Local fix: Set FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY in your .env.\n') +
       '============================================================'
     );
   }
 
   if (firestoreSyncSkipped && process.env.FIRESTORE_REQUIRE_SYNC_ON_REGISTER === 'true') {
+    console.warn(`${requestTag} step=local_sqlite_rollback reason=FIRESTORE_REQUIRE_SYNC_ON_REGISTER=true and sync skipped`);
     db.prepare('DELETE FROM accounts WHERE user_id = ?').run(result.lastInsertRowid);
     db.prepare('DELETE FROM users WHERE id = ?').run(result.lastInsertRowid);
     req.session.error = 'Account creation could not be completed right now. The remote user database is unavailable. Please try again later.';
@@ -166,6 +184,7 @@ router.post('/register', [
   req.session.success = firestoreSyncSkipped
     ? 'Account created locally! Note: Remote sync is currently unavailable. Your account will be synced when the service is restored. Please login to continue.'
     : 'Account created successfully! Please login to continue.';
+  console.log(`${requestTag} registration_complete final_status=${firestoreSyncAttempted ? 'synced_firestore' : 'local_only'}`);
   res.redirect('/auth/login');
 });
 

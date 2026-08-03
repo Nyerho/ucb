@@ -1,6 +1,17 @@
 const express = require('express');
 const { db } = require('../database');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const {
+  getFirestoreAdminDiagnostics,
+  logFirestoreDiagnostics,
+  hasAdminCredentials,
+  getResolvedProjectId
+} = require('../lib/firebase-admin');
+const {
+  isFirestoreEnabled,
+  firestoreUserExistsByEmail,
+  syncUserBundleToFirestore
+} = require('../services/firestore-sync');
 
 const router = express.Router();
 
@@ -152,6 +163,79 @@ router.get('/health', (req, res) => {
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
+});
+
+router.get('/debug/firestore', async (req, res) => {
+  const diag = getFirestoreAdminDiagnostics();
+  const forceDiag = req.query.force === '1';
+  if (forceDiag) {
+    logFirestoreDiagnostics(true);
+  }
+  const testEmail = req.query.test_email
+    ? String(req.query.test_email).trim().toLowerCase()
+    : null;
+
+  const result = {
+    timestamp: new Date().toISOString(),
+    runtime: diag.runtime,
+    resolvedProjectId: getResolvedProjectId(),
+    hasAdminCredentials: hasAdminCredentials(),
+    isFirestoreEnabled: false,
+    diagnostics: diag,
+    notes: [
+      'If private_key_valid = NO, fix env var in Vercel Settings → Environment Variables → Redeploy',
+      'If isFirestoreEnabled = YES but users still not appearing, visit:',
+      '   /api/debug/firestore?backfill_missing=1 to rescue all local SQLite users',
+    ]
+  };
+
+  try {
+    result.isFirestoreEnabled = isFirestoreEnabled();
+  } catch (err) {
+    result.isFirestoreEnabled = false;
+    result.isFirestoreEnabledError = String(err.message || err);
+  }
+
+  if (testEmail) {
+    try {
+      result.testEmail = testEmail;
+      const local = db.prepare('SELECT id, email, first_name, last_name, created_at FROM users WHERE email = ?').get(testEmail);
+      result.localUserFound = Boolean(local);
+      result.localUser = local || null;
+
+      if (result.isFirestoreEnabled) {
+        result.firestoreUserExists = await firestoreUserExistsByEmail(testEmail);
+        if (local && !result.firestoreUserExists && req.query.force_sync === '1') {
+          result.forcedSyncResult = await syncUserBundleToFirestore(local.id);
+        }
+      }
+    } catch (err) {
+      result.testEmailError = String(err.message || err);
+    }
+  }
+
+  if (req.query.backfill_missing === '1') {
+    result.backfill = { started: true, message: 'Backfill triggered - check server logs for details. This endpoint does not wait for completion.' };
+    (async () => {
+      try {
+        const { backfillLocalUsersToFirestore } = require('../services/firestore-sync');
+        await backfillLocalUsersToFirestore(500);
+      } catch (e) {
+        console.error('/api/debug/firestore backfill error:', e);
+      }
+    })();
+  }
+
+  const safeForPublic = { ...result };
+  if (safeForPublic.diagnostics) {
+    safeForPublic.diagnostics = {
+      ...safeForPublic.diagnostics,
+      clientEmailValue: undefined,
+    };
+  }
+
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.json(safeForPublic);
 });
 
 module.exports = router;

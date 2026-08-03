@@ -76,10 +76,12 @@ if (isServerless) {
   console.log('  UNITED CREDIT BANK - FIRESTORE STARTUP CHECK');
   console.log('============================================================');
   const diag = getFirestoreAdminDiagnostics();
-  console.log(`  Project ID:        ${diag.projectIdResolved}`);
+  console.log(`  Runtime env:       ${diag.runtime}${diag.isServerless ? ' (serverless)' : ''}`);
+  console.log(`  Project ID:        ${diag.projectIdResolved} (env var set: ${diag.projectIdSet ? 'yes' : 'using default'})`);
   console.log(`  Admin creds ready: ${diag.hasAdminCredentials ? 'YES' : 'NO'}`);
-  console.log(`  Client email set:  ${diag.clientEmailSet ? 'YES' : 'NO'}`);
-  console.log(`  Private key set:   ${diag.privateKeySet ? `YES (${diag.privateKeyLength} chars)` : 'NO'}`);
+  console.log(`  Client email:      ${diag.clientEmailSet ? (diag.clientEmailLooksValid ? 'SET & VALID' : 'SET but INVALID format') : 'NOT SET'}`);
+  console.log(`  Private key:       ${diag.privateKeySet ? `SET (raw=${diag.privateKeyRawLength}, normalized=${diag.normalizedPrivateKeyLength})` : 'NOT SET (CRITICAL)'}`);
+  console.log(`  Key VALID:         ${diag.privateKeyValid ? 'YES ✓' : 'NO ✗  -> ' + diag.privateKeyReason}`);
   console.log(`  Init error:        ${diag.initError ? diag.initError.split('\n')[0] : 'none'}`);
 
   const enabled = isFirestoreEnabled();
@@ -92,15 +94,32 @@ if (isServerless) {
     console.log('  User registration will still work locally (SQLite), but');
     console.log('  users/accounts WILL NOT be synced to Firestore/Firebase.');
     console.log('');
-    console.log('  To enable Firestore sync, add these to your .env file:');
-    console.log('');
-    console.log('  FIREBASE_CLIENT_EMAIL=<your-service-account-email>');
-    console.log('  FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----');
-    console.log('    ...your full private key...');
-    console.log('    -----END PRIVATE KEY-----"');
-    console.log('');
-    console.log('  Get these from: Firebase Console → Project Settings →');
-    console.log('  Service Accounts → Generate new private key (JSON)');
+    if (diag.runtime === 'vercel') {
+      console.log('  VERCEL DEPLOYMENT FIX STEPS:');
+      console.log('  1. Go to: Vercel Dashboard → your-project → Settings →');
+      console.log('     Environment Variables');
+      console.log('  2. Ensure these are set (then Redeploy!):');
+      console.log('     • FIREBASE_CLIENT_EMAIL');
+      console.log('       (e.g. firebase-adminsdk-XXX@project.iam.gserviceaccount.com)');
+      console.log('     • FIREBASE_PRIVATE_KEY');
+      console.log('       PASTE THE FULL KEY WITH REAL LINE BREAKS.');
+      console.log('       Do NOT wrap in extra quotes.');
+      console.log('     • Optional: FIREBASE_PROJECT_ID (e.g. unitedcb-4845b)');
+      console.log('');
+      console.log('  3. After redeploying, visit:');
+      console.log('     https://<your-domain>/api/debug/firestore');
+      console.log('     to confirm isFirestoreEnabled = YES and private_key_valid = YES');
+    } else {
+      console.log('  To enable Firestore sync, add these to your .env file:');
+      console.log('');
+      console.log('  FIREBASE_CLIENT_EMAIL=<your-service-account-email>');
+      console.log('  FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----');
+      console.log('    ...your full private key...');
+      console.log('    -----END PRIVATE KEY-----"');
+      console.log('');
+      console.log('  Get these from: Firebase Console → Project Settings →');
+      console.log('  Service Accounts → Generate new private key (JSON)');
+    }
     console.log('');
     console.log('  Optional: Set FIRESTORE_REQUIRE_SYNC_ON_REGISTER=true');
     console.log('  to FAIL registration if Firestore is unavailable.');

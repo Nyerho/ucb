@@ -8,6 +8,11 @@ const cookieParser = require('cookie-parser');
 const moment = require('moment');
 
 const { db } = require('./database');
+const {
+  hydrateUserFromFirestoreById,
+  isFirestoreEnabled,
+  syncConfiguredAdminToFirestore
+} = require('./services/firestore-sync');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -53,6 +58,12 @@ if (!isServerless) {
 
 app.use(session(sessionConfig));
 
+if (isFirestoreEnabled()) {
+  syncConfiguredAdminToFirestore().catch((error) => {
+    console.error('Failed to sync configured admin to Firestore:', error);
+  });
+}
+
 app.use((req, res, next) => {
   res.locals.moment = moment;
   res.locals.currency = (amount, currency = 'AUD') => {
@@ -70,9 +81,16 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   if (req.session.userId) {
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
+    let user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
+    if (!user && isFirestoreEnabled()) {
+      try {
+        user = await hydrateUserFromFirestoreById(req.session.userId);
+      } catch (error) {
+        console.error('Failed to hydrate session user from Firestore:', error);
+      }
+    }
     if (user) {
       req.user = user;
       req.session.user = {
@@ -84,6 +102,9 @@ app.use((req, res, next) => {
         is_verified: user.is_verified,
         is_frozen: user.is_frozen
       };
+    } else {
+      req.session.user = null;
+      req.session.userId = null;
     }
   }
   next();

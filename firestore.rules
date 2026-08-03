@@ -9,12 +9,20 @@ service cloud.firestore {
       return /databases/$(database)/documents/admins/$(request.auth.uid);
     }
 
+    function userPath(userId) {
+      return /databases/$(database)/documents/users/$(userId);
+    }
+
+    function isOwnUser(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
     function isAdmin() {
       return signedIn() && exists(adminPath());
     }
 
     function adminData() {
-      return get(adminPath()).data;
+      return isAdmin() ? get(adminPath()).data : null;
     }
 
     function isActiveAdmin() {
@@ -22,7 +30,41 @@ service cloud.firestore {
     }
 
     function isSuperAdmin() {
-      return isActiveAdmin() && (!('role' in adminData()) || adminData().role == 'super_admin');
+      return isActiveAdmin() && (
+        !('role' in adminData()) ||
+        adminData().role in ['super_admin', 'owner']
+      );
+    }
+
+    function userDoc(userId) {
+      return exists(userPath(userId)) ? get(userPath(userId)).data : null;
+    }
+
+    function ownsUserData(userId) {
+      return isOwnUser(userId) || (
+        signedIn() &&
+        exists(userPath(userId)) &&
+        get(userPath(userId)).data.auth_uid == request.auth.uid
+      );
+    }
+
+    function ownsResourceByUserId(userId) {
+      return signedIn() && (
+        request.auth.uid == userId ||
+        ownsUserData(userId)
+      );
+    }
+
+    function ownsResource(data) {
+      return signedIn() && (
+        (data.user_ref is string && ownsResourceByUserId(data.user_ref)) ||
+        (data.user_id is string && ownsResourceByUserId(data.user_id))
+      );
+    }
+
+    function accountBelongsToSignedInUser() {
+      return signedIn()
+        && ownsResource(resource.data);
     }
 
     function validAdminDoc() {
@@ -49,8 +91,34 @@ service cloud.firestore {
       ]);
     }
 
+    function validUserCreate(userId) {
+      return ownsUserData(userId)
+        && (!('user_id' in request.resource.data) || request.resource.data.user_id == userId)
+        && request.resource.data.is_admin == 0
+        && request.resource.data.is_frozen == 0;
+    }
+
+    function validUserSelfUpdate() {
+      return request.resource.data.is_admin == resource.data.is_admin
+        && request.resource.data.is_verified == resource.data.is_verified
+        && request.resource.data.is_frozen == resource.data.is_frozen
+        && request.resource.data.role == resource.data.role;
+    }
+
+    function validOwnerOnlyDoc() {
+      return signedIn()
+        && ownsResource(request.resource.data);
+    }
+
+    function validNotificationSelfUpdate() {
+      return request.resource.data.user_id == resource.data.user_id
+        && request.resource.data.title == resource.data.title
+        && request.resource.data.message == resource.data.message
+        && request.resource.data.type == resource.data.type;
+    }
+
     match /admins/{adminId} {
-      allow read: if isActiveAdmin();
+      allow read: if isActiveAdmin() || isOwnUser(adminId);
       allow create: if isSuperAdmin() && validAdminDoc();
       allow update: if isSuperAdmin() && validAdminDoc();
       allow delete: if isSuperAdmin() && adminId != request.auth.uid;
@@ -63,53 +131,96 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read, create, update: if isActiveAdmin();
+      allow read: if isActiveAdmin() || ownsUserData(userId);
+      allow create: if isActiveAdmin() || validUserCreate(userId);
+      allow update: if isActiveAdmin() || (ownsUserData(userId) && validUserSelfUpdate());
       allow delete: if isSuperAdmin();
     }
 
     match /accounts/{accountId} {
-      allow read, create, update: if isActiveAdmin();
-      allow delete: if isSuperAdmin();
+      allow read: if isActiveAdmin() || accountBelongsToSignedInUser();
+      allow create, update, delete: if isActiveAdmin();
     }
 
     match /transactions/{transactionId} {
-      allow read, create, update: if isActiveAdmin();
-      allow delete: if isSuperAdmin();
+      allow read: if isActiveAdmin() || ownsResource(resource.data);
+      allow create, update, delete: if isActiveAdmin();
     }
 
     match /cards/{cardId} {
-      allow read, create, update: if isActiveAdmin();
-      allow delete: if isSuperAdmin();
+      allow read: if isActiveAdmin() || ownsResource(resource.data);
+      allow create, update, delete: if isActiveAdmin();
     }
 
     match /loans/{loanId} {
-      allow read, create, update: if isActiveAdmin();
-      allow delete: if isSuperAdmin();
+      allow read: if isActiveAdmin() || ownsResource(resource.data);
+      allow create, update, delete: if isActiveAdmin();
+    }
+
+    match /loanPayments/{paymentId} {
+      allow read: if isActiveAdmin() || ownsResource(resource.data);
+      allow create, update, delete: if isActiveAdmin();
     }
 
     match /kyc/{kycId} {
-      allow read, create, update: if isActiveAdmin();
+      allow read: if isActiveAdmin() || ownsResource(resource.data);
+      allow create: if isActiveAdmin() || validOwnerOnlyDoc();
+      allow update: if isActiveAdmin();
       allow delete: if isSuperAdmin();
     }
 
     match /billPayments/{paymentId} {
-      allow read, create, update: if isActiveAdmin();
-      allow delete: if isSuperAdmin();
+      allow read: if isActiveAdmin() || ownsResource(resource.data);
+      allow create, update, delete: if isActiveAdmin();
     }
 
     match /beneficiaries/{beneficiaryId} {
-      allow read, create, update: if isActiveAdmin();
-      allow delete: if isSuperAdmin();
+      allow read: if isActiveAdmin() || ownsResource(resource.data);
+      allow create: if isActiveAdmin() || validOwnerOnlyDoc();
+      allow update: if isActiveAdmin() || (
+        ownsResource(resource.data) &&
+        ownsResource(request.resource.data) &&
+        request.resource.data.user_id == resource.data.user_id &&
+        request.resource.data.user_ref == resource.data.user_ref
+      );
+      allow delete: if isActiveAdmin() || ownsResource(resource.data);
     }
 
     match /notifications/{notificationId} {
-      allow read, create, update: if isActiveAdmin();
-      allow delete: if isSuperAdmin();
+      allow read: if isActiveAdmin() || ownsResource(resource.data);
+      allow create: if isActiveAdmin();
+      allow update: if isActiveAdmin() || (
+        ownsResource(resource.data) &&
+        validNotificationSelfUpdate()
+      );
+      allow delete: if isActiveAdmin();
     }
 
     match /auditLogs/{logId} {
       allow read, create: if isActiveAdmin();
       allow update, delete: if false;
+    }
+
+    match /siteContent/{docId} {
+      allow read: if true;
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /supportTickets/{ticketId} {
+      allow read: if isActiveAdmin() || ownsResource(resource.data);
+      allow create: if isActiveAdmin() || validOwnerOnlyDoc();
+      allow update: if isActiveAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    match /exchangeRates/{docId} {
+      allow read: if true;
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    match /publicSettings/{docId} {
+      allow read: if true;
+      allow create, update, delete: if isSuperAdmin();
     }
   }
 }

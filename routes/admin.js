@@ -7,6 +7,7 @@ const {
   addAuditLog,
   generateAccountNumber: generateAcc
 } = require('../middleware/auth');
+const { getFirestoreDashboardCustomerStats, isFirestoreEnabled } = require('../services/firestore-sync');
 
 const router = express.Router();
 
@@ -182,7 +183,7 @@ function buildTransactionPayload(body) {
   };
 }
 
-function getStats() {
+async function getStats() {
   const todayTransactions = db.prepare(`
     SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as volume
     FROM transactions
@@ -243,7 +244,7 @@ function getStats() {
       LIMIT 10
     `).all();
 
-  return {
+  const baseStats = {
     totalUsers,
     totalCustomers: totalUsers,
     totalAccounts,
@@ -268,10 +269,33 @@ function getStats() {
     activeLoans,
     unverifiedCustomers
   };
+
+  if (!isFirestoreEnabled()) {
+    return baseStats;
+  }
+
+  try {
+    const firestoreStats = await getFirestoreDashboardCustomerStats();
+    if (!firestoreStats) {
+      return baseStats;
+    }
+
+    return {
+      ...baseStats,
+      totalUsers: firestoreStats.totalCustomers,
+      totalCustomers: firestoreStats.totalCustomers,
+      newThisWeek: firestoreStats.newThisWeek,
+      unverifiedCustomers: firestoreStats.unverifiedCustomers,
+      recentUsers: firestoreStats.recentUsers.length ? firestoreStats.recentUsers : baseStats.recentUsers
+    };
+  } catch (error) {
+    console.error('Failed to load customer stats from Firestore:', error);
+    return baseStats;
+  }
 }
 
-router.get('/dashboard', requireAdmin, (req, res) => {
-  const stats = getStats();
+router.get('/dashboard', requireAdmin, async (req, res) => {
+  const stats = await getStats();
   const admin = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
 
   res.render('admin/dashboard', {

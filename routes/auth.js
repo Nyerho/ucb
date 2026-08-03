@@ -3,6 +3,11 @@ const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const { db, generateAccountNumber } = require('../database');
 const { requireAuth } = require('../middleware/auth');
+const {
+  syncUserBundleToFirestore,
+  hydrateUserFromFirestoreByEmail,
+  isFirestoreEnabled
+} = require('../services/firestore-sync');
 
 const router = express.Router();
 
@@ -84,6 +89,14 @@ router.post('/register', [
     'active'
   );
 
+  if (isFirestoreEnabled()) {
+    try {
+      await syncUserBundleToFirestore(result.lastInsertRowid);
+    } catch (error) {
+      console.error('Failed to sync registered user to Firestore:', error);
+    }
+  }
+
   req.session.success = 'Account created successfully! Please login to continue.';
   res.redirect('/auth/login');
 });
@@ -109,7 +122,16 @@ router.post('/login', async (req, res) => {
     return res.redirect('/auth/login');
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.trim().toLowerCase());
+  const normalizedEmail = email.trim().toLowerCase();
+  let user = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail);
+
+  if (!user && isFirestoreEnabled()) {
+    try {
+      user = await hydrateUserFromFirestoreByEmail(normalizedEmail);
+    } catch (error) {
+      console.error('Failed to hydrate user from Firestore during login:', error);
+    }
+  }
 
   if (!user) {
     req.session.error = 'Invalid email or password.';
@@ -128,6 +150,12 @@ router.post('/login', async (req, res) => {
   }
 
   db.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(user.id);
+
+  if (isFirestoreEnabled()) {
+    syncUserBundleToFirestore(user.id).catch((error) => {
+      console.error('Failed to sync login update to Firestore:', error);
+    });
+  }
 
   req.session.userId = user.id;
   req.session.user = {

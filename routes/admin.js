@@ -28,6 +28,24 @@ function toSqlDateTime(value) {
   return normalized.length === 16 ? `${normalized}:00` : normalized;
 }
 
+// Treat a record as a customer if it is explicitly non-admin or it owns a non-admin account.
+// This keeps dashboard counts accurate when imported or migrated rows have inconsistent flags.
+function buildCustomerScope(extraConditions = '') {
+  return `
+    FROM users u
+    WHERE (
+      COALESCE(u.is_admin, 0) = 0
+      OR EXISTS (
+        SELECT 1
+        FROM accounts a
+        WHERE a.user_id = u.id
+          AND COALESCE(a.account_type, '') != 'Admin Account'
+      )
+    )
+    ${extraConditions}
+  `;
+}
+
 function getTransactionImpact(txn) {
   if (!txn) {
     return { balance: 0, available: 0 };
@@ -172,8 +190,7 @@ function getStats() {
   `).get();
   const newThisWeek = db.prepare(`
     SELECT COUNT(*) as count
-    FROM users
-    WHERE is_admin = 0 AND DATE(created_at) >= DATE('now', '-7 days')
+    ${buildCustomerScope("AND DATE(u.created_at) >= DATE('now', '-7 days')")}
   `).get().count;
   const activeCards = db.prepare(`
     SELECT COUNT(*) as count
@@ -187,8 +204,7 @@ function getStats() {
   `).get().count;
   const unverifiedCustomers = db.prepare(`
     SELECT COUNT(*) as count
-    FROM users
-    WHERE is_admin = 0 AND is_verified = 0
+    ${buildCustomerScope('AND COALESCE(u.is_verified, 0) = 0')}
   `).get().count;
   const totalLoansOutstanding = db.prepare(`
     SELECT COALESCE(SUM(COALESCE(remaining_balance, loan_amount)), 0) as total
@@ -196,7 +212,10 @@ function getStats() {
     WHERE status = 'disbursed'
   `).get().total;
 
-  const totalUsers = db.prepare('SELECT COUNT(*) as count FROM users WHERE is_admin = 0').get().count;
+  const totalUsers = db.prepare(`
+    SELECT COUNT(*) as count
+    ${buildCustomerScope()}
+  `).get().count;
   const totalAccounts = db.prepare('SELECT COUNT(*) as count FROM accounts').get().count;
   const totalCards = db.prepare('SELECT COUNT(*) as count FROM cards').get().count;
   const totalLoans = db.prepare('SELECT COUNT(*) as count FROM loans').get().count;
@@ -211,8 +230,7 @@ function getStats() {
   const recentUsers = db.prepare(`
       SELECT u.*,
         (SELECT COUNT(*) FROM accounts a WHERE a.user_id = u.id) as account_count
-      FROM users u
-      WHERE u.is_admin = 0
+      ${buildCustomerScope()}
       ORDER BY u.created_at DESC
       LIMIT 5
     `).all();

@@ -245,31 +245,42 @@ ensureColumn('users', 'transfer_pin_updated_at', 'DATETIME');
 ensureColumn('users', 'role', "TEXT DEFAULT 'admin'");
 ensureColumn('users', 'last_login', 'DATETIME');
 
+const DEFAULT_ADMIN = {
+  email: 'admin@unitedcreditbank.xyz',
+  passwordHash: '$2a$10$7UlqeJeWkfHTseXY1YtXI.2OcEdoR07kcqqV1zNmfWASBvwW0Kr7.',
+  first_name: 'System',
+  last_name: 'Administrator',
+  phone: '02-8000-0001',
+  role: 'super_admin'
+};
+
 function getConfiguredAdmin() {
   const email = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
   const password = process.env.ADMIN_PASSWORD || '';
 
-  if (!email || !password) {
-    return null;
+  if (email && password) {
+    return {
+      email,
+      passwordHash: bcrypt.hashSync(password, 10),
+      first_name: (process.env.ADMIN_FIRST_NAME || DEFAULT_ADMIN.first_name).trim() || DEFAULT_ADMIN.first_name,
+      last_name: (process.env.ADMIN_LAST_NAME || DEFAULT_ADMIN.last_name).trim() || DEFAULT_ADMIN.last_name,
+      phone: (process.env.ADMIN_PHONE || DEFAULT_ADMIN.phone).trim() || DEFAULT_ADMIN.phone,
+      role: (process.env.ADMIN_ROLE || DEFAULT_ADMIN.role).trim() || DEFAULT_ADMIN.role
+    };
   }
 
   return {
-    email,
-    password,
-    first_name: (process.env.ADMIN_FIRST_NAME || 'System').trim() || 'System',
-    last_name: (process.env.ADMIN_LAST_NAME || 'Administrator').trim() || 'Administrator',
-    phone: (process.env.ADMIN_PHONE || '02-8000-0001').trim() || '02-8000-0001',
-    role: (process.env.ADMIN_ROLE || 'super_admin').trim() || 'super_admin'
+    ...DEFAULT_ADMIN,
+    first_name: (process.env.ADMIN_FIRST_NAME || DEFAULT_ADMIN.first_name).trim() || DEFAULT_ADMIN.first_name,
+    last_name: (process.env.ADMIN_LAST_NAME || DEFAULT_ADMIN.last_name).trim() || DEFAULT_ADMIN.last_name,
+    phone: (process.env.ADMIN_PHONE || DEFAULT_ADMIN.phone).trim() || DEFAULT_ADMIN.phone,
+    role: (process.env.ADMIN_ROLE || DEFAULT_ADMIN.role).trim() || DEFAULT_ADMIN.role,
+    email: (process.env.ADMIN_EMAIL || DEFAULT_ADMIN.email).trim().toLowerCase() || DEFAULT_ADMIN.email
   };
 }
 
 function ensureConfiguredAdmin() {
   const admin = getConfiguredAdmin();
-  if (!admin) {
-    return;
-  }
-
-  const passwordHash = bcrypt.hashSync(admin.password, 10);
   const existingByEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(admin.email);
 
   if (existingByEmail) {
@@ -282,7 +293,7 @@ function ensureConfiguredAdmin() {
       admin.first_name,
       admin.last_name,
       admin.phone,
-      passwordHash,
+      admin.passwordHash,
       admin.role,
       existingByEmail.id
     );
@@ -301,7 +312,7 @@ function ensureConfiguredAdmin() {
       admin.last_name,
       admin.email,
       admin.phone,
-      passwordHash,
+      admin.passwordHash,
       admin.role,
       existingAdmin.id
     );
@@ -316,7 +327,7 @@ function ensureConfiguredAdmin() {
     admin.last_name,
     admin.email,
     admin.phone,
-    passwordHash,
+    admin.passwordHash,
     admin.role
   );
 }

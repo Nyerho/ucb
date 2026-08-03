@@ -1097,12 +1097,13 @@ a:hover {
 .auth-wrap {
   min-height: 100vh;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 40px 24px;
   background: linear-gradient(135deg, #FFF5F6 0%, #FFFFFF 40%, #F8F9FB 100%);
   position: relative;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .auth-wrap::before {

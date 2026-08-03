@@ -6,6 +6,7 @@ const { requireAuth } = require('../middleware/auth');
 const {
   syncUserBundleToFirestore,
   hydrateUserFromFirestoreByEmail,
+  firestoreUserExistsByEmail,
   isFirestoreEnabled
 } = require('../services/firestore-sync');
 
@@ -46,8 +47,9 @@ router.post('/register', [
   }
 
   const { first_name, last_name, email, phone, password, address, city, state, postcode, date_of_birth } = req.body;
+  const normalizedEmail = email.trim().toLowerCase();
 
-  const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(normalizedEmail);
   if (existingUser) {
     req.session.error = 'An account with this email already exists.';
     return res.render('auth/register', {
@@ -55,6 +57,28 @@ router.post('/register', [
       page: 'register',
       old: req.body
     });
+  }
+
+  if (isFirestoreEnabled()) {
+    try {
+      const existsRemotely = await firestoreUserExistsByEmail(normalizedEmail);
+      if (existsRemotely) {
+        req.session.error = 'An account with this email already exists.';
+        return res.render('auth/register', {
+          title: 'Open Account - United Credit Bank',
+          page: 'register',
+          old: req.body
+        });
+      }
+    } catch (error) {
+      console.error('Failed checking Firestore for existing user:', error);
+      req.session.error = 'We could not verify your details right now. Please try again.';
+      return res.render('auth/register', {
+        title: 'Open Account - United Credit Bank',
+        page: 'register',
+        old: req.body
+      });
+    }
   }
 
   const hashedPassword = await bcrypt.hash(password, 10);
@@ -66,7 +90,7 @@ router.post('/register', [
   const result = insertUser.run(
     first_name.trim(),
     last_name.trim(),
-    email.trim().toLowerCase(),
+    normalizedEmail,
     phone.trim(),
     hashedPassword,
     address || '',
@@ -91,9 +115,20 @@ router.post('/register', [
 
   if (isFirestoreEnabled()) {
     try {
-      await syncUserBundleToFirestore(result.lastInsertRowid);
+      const synced = await syncUserBundleToFirestore(result.lastInsertRowid);
+      if (!synced) {
+        throw new Error('Firestore sync did not complete.');
+      }
     } catch (error) {
       console.error('Failed to sync registered user to Firestore:', error);
+      db.prepare('DELETE FROM accounts WHERE user_id = ?').run(result.lastInsertRowid);
+      db.prepare('DELETE FROM users WHERE id = ?').run(result.lastInsertRowid);
+      req.session.error = 'Account creation could not be completed right now. Please try again.';
+      return res.render('auth/register', {
+        title: 'Open Account - United Credit Bank',
+        page: 'register',
+        old: req.body
+      });
     }
   }
 

@@ -241,16 +241,42 @@ async function syncAccountToFirestore(account) {
 }
 
 async function syncUserBundleToFirestore(userId) {
+  const firestore = getFirestore();
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  if (!user) {
+  if (!firestore || !user) {
     return false;
   }
 
-  await syncUserToFirestore(user);
   const accounts = db.prepare('SELECT * FROM accounts WHERE user_id = ?').all(userId);
+
+  const batch = firestore.batch();
+  batch.set(
+    firestore.collection(USERS_COLLECTION).doc(String(user.id)),
+    toFirestoreUser(user),
+    { merge: true }
+  );
+
   for (const account of accounts) {
-    await syncAccountToFirestore(account);
+    batch.set(
+      firestore.collection(ACCOUNTS_COLLECTION).doc(String(account.id)),
+      toFirestoreAccount(account),
+      { merge: true }
+    );
   }
+
+  await batch.commit();
+
+  const [userDoc, accountDoc] = await Promise.all([
+    firestore.collection(USERS_COLLECTION).doc(String(user.id)).get(),
+    accounts.length
+      ? firestore.collection(ACCOUNTS_COLLECTION).doc(String(accounts[0].id)).get()
+      : Promise.resolve({ exists: true })
+  ]);
+
+  if (!userDoc.exists || !accountDoc.exists) {
+    throw new Error('Firestore registration sync verification failed.');
+  }
+
   return true;
 }
 
@@ -302,6 +328,20 @@ async function hydrateUserFromFirestoreByEmail(email) {
   const localUser = upsertLocalUser(doc.data(), doc.id);
   await hydrateAccountsForUser(localUser ? localUser.id : doc.id);
   return localUser;
+}
+
+async function firestoreUserExistsByEmail(email) {
+  const firestore = getFirestore();
+  if (!firestore || !email) {
+    return false;
+  }
+
+  const snapshot = await firestore.collection(USERS_COLLECTION)
+    .where('email', '==', String(email).trim().toLowerCase())
+    .limit(1)
+    .get();
+
+  return !snapshot.empty;
 }
 
 async function hydrateUserFromFirestoreById(userId) {
@@ -393,5 +433,6 @@ module.exports = {
   syncConfiguredAdminToFirestore,
   hydrateUserFromFirestoreByEmail,
   hydrateUserFromFirestoreById,
+  firestoreUserExistsByEmail,
   getFirestoreDashboardCustomerStats
 };

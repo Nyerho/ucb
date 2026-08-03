@@ -1791,6 +1791,7 @@ a:hover {
 
 .status-rejected,
 .status-frozen,
+.status-blocked,
 .status-cancelled {
   background: var(--danger-light);
   color: #991B1B;
@@ -1798,6 +1799,7 @@ a:hover {
 
 .status-rejected::before,
 .status-frozen::before,
+.status-blocked::before,
 .status-cancelled::before {
   background: var(--danger);
 }

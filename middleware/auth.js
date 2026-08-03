@@ -1,5 +1,7 @@
 const { db } = require('../database');
 
+const NON_OPERABLE_ACCOUNT_STATUSES = new Set(['frozen', 'blocked', 'closed']);
+
 function requireAuth(req, res, next) {
   if (!req.session.userId) {
     req.session.error = 'Please login to access this page.';
@@ -28,8 +30,41 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function getUserAccounts(userId) {
-  return db.prepare('SELECT * FROM accounts WHERE user_id = ?').all(userId);
+function getUserAccounts(userId, options = {}) {
+  let query = 'SELECT * FROM accounts WHERE user_id = ?';
+  const params = [userId];
+
+  if (options.operableOnly) {
+    query += " AND status = 'active'";
+  }
+
+  query += ' ORDER BY id';
+  return db.prepare(query).all(...params);
+}
+
+function getAccountStatusMessage(account, action = 'complete this action') {
+  if (!account) {
+    return 'Invalid account selected.';
+  }
+
+  const status = String(account.status || 'active').toLowerCase();
+  if (!NON_OPERABLE_ACCOUNT_STATUSES.has(status)) {
+    return null;
+  }
+
+  if (status === 'frozen') {
+    return `This account is frozen and cannot be used to ${action}.`;
+  }
+
+  if (status === 'blocked') {
+    return `This account is blocked and cannot be used to ${action}.`;
+  }
+
+  return `This account is closed and cannot be used to ${action}.`;
+}
+
+function isAccountOperable(account) {
+  return !getAccountStatusMessage(account);
 }
 
 function getPrimaryAccount(userId) {
@@ -86,6 +121,8 @@ module.exports = {
   requireVerified,
   requireAdmin,
   getUserAccounts,
+  getAccountStatusMessage,
+  isAccountOperable,
   getPrimaryAccount,
   getRecentTransactions,
   getNotifications,

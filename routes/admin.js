@@ -12,6 +12,8 @@ const router = express.Router();
 
 const OUTGOING_TYPES = new Set(['local_transfer', 'international_transfer', 'withdrawal', 'bill_payment', 'loan_payment']);
 const INCOMING_TYPES = new Set(['deposit', 'loan_disbursement']);
+const ACCOUNT_STATUS_OPTIONS = new Set(['active', 'frozen', 'blocked', 'closed']);
+const NON_OPERABLE_ACCOUNT_STATUSES = new Set(['frozen', 'blocked', 'closed']);
 
 function parseMoney(value, fallback = 0) {
   const parsed = parseFloat(value);
@@ -74,6 +76,67 @@ function applyAccountImpact(accountId, impact, multiplier = 1) {
     SET balance = balance + ?, available_balance = available_balance + ?
     WHERE id = ?
   `).run(impact.balance * multiplier, impact.available * multiplier, accountId);
+}
+
+function getAccountRestrictionMessage(account, action = 'complete this action') {
+  if (!account) {
+    return 'Account not found.';
+  }
+
+  const status = String(account.status || 'active').toLowerCase();
+  if (!NON_OPERABLE_ACCOUNT_STATUSES.has(status)) {
+    return null;
+  }
+
+  if (status === 'frozen') {
+    return `This account is frozen and cannot be used to ${action}.`;
+  }
+
+  if (status === 'blocked') {
+    return `This account is blocked and cannot be used to ${action}.`;
+  }
+
+  return `This account is closed and cannot be used to ${action}.`;
+}
+
+function resolveAccountRestrictions(accountId, adminId, reason) {
+  const pendingTransactions = db.prepare(`
+    SELECT * FROM transactions
+    WHERE account_id = ? AND status = 'pending' AND transaction_type IN ('local_transfer', 'international_transfer', 'withdrawal', 'bill_payment', 'loan_payment')
+  `).all(accountId);
+  const pendingBills = db.prepare(`
+    SELECT * FROM bill_payments
+    WHERE account_id = ? AND status IN ('pending', 'scheduled')
+  `).all(accountId);
+
+  const tx = db.transaction(() => {
+    pendingTransactions.forEach((txn) => {
+      const refund = parseMoney(txn.amount) + parseMoney(txn.fee);
+      if (refund > 0) {
+        db.prepare('UPDATE accounts SET available_balance = available_balance + ? WHERE id = ?').run(refund, accountId);
+      }
+
+      db.prepare(`
+        UPDATE transactions
+        SET status = 'rejected', rejection_reason = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(reason, adminId, txn.id);
+    });
+
+    pendingBills.forEach((bill) => {
+      db.prepare(`
+        UPDATE bill_payments
+        SET status = 'rejected', rejection_reason = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(reason, adminId, bill.id);
+    });
+  });
+  tx();
+
+  return {
+    transactionsRejected: pendingTransactions.length,
+    billsRejected: pendingBills.length
+  };
 }
 
 function buildTransactionPayload(body) {
@@ -591,7 +654,24 @@ router.post('/transactions/:id/approve', requireAdmin, (req, res) => {
   }
 
   const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(txn.account_id);
-  const isOutgoing = ['local_transfer', 'international_transfer', 'withdrawal', 'bill_payment'].includes(txn.transaction_type);
+  const isOutgoing = OUTGOING_TYPES.has(txn.transaction_type);
+  const restrictionMessage = getAccountRestrictionMessage(account, 'approve pending transactions');
+  if (isOutgoing && restrictionMessage) {
+    const refund = parseFloat(txn.amount) + parseFloat(txn.fee);
+    const rejectTx = db.transaction(() => {
+      if (refund > 0) {
+        db.prepare('UPDATE accounts SET available_balance = available_balance + ? WHERE id = ?').run(refund, txn.account_id);
+      }
+      db.prepare('UPDATE transactions SET status = ?, rejection_reason = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run('rejected', restrictionMessage, req.session.userId, txnId);
+    });
+    rejectTx();
+    addAuditLog(req.session.userId, 'REJECT_TRANSACTION', 'transaction', txnId, `Rejected txn #${txnId}: ${restrictionMessage}`, req.ip);
+    addNotification(txn.user_id, 'Transaction Rejected', restrictionMessage, 'warning');
+    req.session.error = restrictionMessage;
+    return res.redirect('/admin/approvals?section=transfers');
+  }
+
   const tx = db.transaction(() => {
     if (isOutgoing) {
       db.prepare('UPDATE accounts SET balance = balance - ? WHERE id = ?').run(parseFloat(txn.amount) + parseFloat(txn.fee), txn.account_id);
@@ -625,7 +705,7 @@ router.post('/transactions/:id/reject', requireAdmin, (req, res) => {
   }
 
   const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(txn.account_id);
-  const isOutgoing = ['local_transfer', 'international_transfer', 'withdrawal', 'bill_payment'].includes(txn.transaction_type);
+  const isOutgoing = OUTGOING_TYPES.has(txn.transaction_type);
   const refund = parseFloat(txn.amount) + parseFloat(txn.fee);
 
   if (isOutgoing) {
@@ -730,6 +810,16 @@ router.post('/bills/:id/approve', requireAdmin, (req, res) => {
   if (!bill) return res.redirect('/admin/approvals?section=bills');
 
   const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(bill.account_id);
+  const restrictionMessage = getAccountRestrictionMessage(account, 'approve pending bill payments');
+  if (restrictionMessage) {
+    db.prepare('UPDATE bill_payments SET status = ?, rejection_reason = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run('rejected', restrictionMessage, req.session.userId, req.params.id);
+    addAuditLog(req.session.userId, 'REJECT_BILLPAY', 'bill_payment', req.params.id, `Rejected bill payment #${req.params.id}: ${restrictionMessage}`, req.ip);
+    addNotification(bill.user_id, 'Bill Payment Rejected', restrictionMessage, 'warning');
+    req.session.error = restrictionMessage;
+    return res.redirect('/admin/approvals?section=bills');
+  }
+
   const tx = db.transaction(() => {
     db.prepare('UPDATE accounts SET balance = balance - ?, available_balance = available_balance - ? WHERE id = ?').run(bill.amount, bill.amount, bill.account_id);
     db.prepare('UPDATE bill_payments SET status = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?').run('completed', req.session.userId, req.params.id);
@@ -847,10 +937,16 @@ router.post('/accounts/:id/update', requireAdmin, (req, res) => {
     available_balance,
     status
   } = req.body;
+  const normalizedStatus = String(status || 'active').toLowerCase();
 
   const duplicate = db.prepare('SELECT id FROM accounts WHERE account_number = ? AND id != ?').get(account_number, accountId);
   if (duplicate) {
     req.session.error = 'That account number is already in use.';
+    return res.redirect(`/admin/accounts/${accountId}`);
+  }
+
+  if (!ACCOUNT_STATUS_OPTIONS.has(normalizedStatus)) {
+    req.session.error = 'Invalid account status selected.';
     return res.redirect(`/admin/accounts/${accountId}`);
   }
 
@@ -873,7 +969,7 @@ router.post('/accounts/:id/update', requireAdmin, (req, res) => {
       parseMoney(interest_rate),
       newBalance,
       newAvailable,
-      status || 'active',
+      normalizedStatus,
       accountId
     );
 
@@ -893,23 +989,41 @@ router.post('/accounts/:id/update', requireAdmin, (req, res) => {
   });
   tx();
 
+  let restrictionSummary = null;
+  if (NON_OPERABLE_ACCOUNT_STATUSES.has(normalizedStatus)) {
+    const reason = `Rejected automatically because account ${account.account_number} was marked ${normalizedStatus} by an administrator.`;
+    restrictionSummary = resolveAccountRestrictions(accountId, req.session.userId, reason);
+  }
+
   addAuditLog(req.session.userId, 'UPDATE_ACCOUNT', 'account', accountId, `Updated account ${account.account_number} details and balances`, req.ip);
   addNotification(account.user_id, 'Account Updated', `Your ${account.account_type} account details were updated by an administrator.`, 'info');
 
-  req.session.success = 'Account details updated successfully.';
+  req.session.success = restrictionSummary && (restrictionSummary.transactionsRejected || restrictionSummary.billsRejected)
+    ? `Account updated. Rejected ${restrictionSummary.transactionsRejected} pending transaction(s) and ${restrictionSummary.billsRejected} pending bill(s) because the account is ${normalizedStatus}.`
+    : 'Account details updated successfully.';
   res.redirect(`/admin/accounts/${accountId}`);
 });
 
 router.post('/accounts/:id/update-status', requireAdmin, (req, res) => {
-  const { status } = req.body;
+  const status = String(req.body.status || 'active').toLowerCase();
   const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(req.params.id);
   if (!account) return res.redirect('/admin/accounts');
 
+  if (!ACCOUNT_STATUS_OPTIONS.has(status)) {
+    req.session.error = 'Invalid account status selected.';
+    return res.redirect(`/admin/accounts/${req.params.id}`);
+  }
+
   db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run(status, req.params.id);
+  const restrictionSummary = NON_OPERABLE_ACCOUNT_STATUSES.has(status)
+    ? resolveAccountRestrictions(req.params.id, req.session.userId, `Rejected automatically because account ${account.account_number} was marked ${status} by an administrator.`)
+    : null;
   addAuditLog(req.session.userId, 'UPDATE_ACCOUNT_STATUS', 'account', req.params.id, `Set account ${account.account_number} to ${status}`, req.ip);
   addNotification(account.user_id, 'Account Status Updated', `Your ${account.account_type} account (${account.account_number.slice(-4)}) status is now ${status}.`, 'info');
 
-  req.session.success = `Account status updated to ${status}.`;
+  req.session.success = restrictionSummary && (restrictionSummary.transactionsRejected || restrictionSummary.billsRejected)
+    ? `Account status updated to ${status}. Rejected ${restrictionSummary.transactionsRejected} pending transaction(s) and ${restrictionSummary.billsRejected} pending bill(s).`
+    : `Account status updated to ${status}.`;
   res.redirect(`/admin/accounts/${req.params.id}`);
 });
 

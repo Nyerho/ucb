@@ -4,6 +4,7 @@ const {
   requireAuth,
   requireVerified,
   getUserAccounts,
+  getAccountStatusMessage,
   addNotification
 } = require('../middleware/auth');
 
@@ -66,7 +67,7 @@ router.get('/', requireAuth, requireVerified, (req, res) => {
 });
 
 router.get('/pay', requireAuth, requireVerified, (req, res) => {
-  const accounts = getUserAccounts(req.session.userId);
+  const accounts = getUserAccounts(req.session.userId, { operableOnly: true });
   const selectedBiller = req.query.biller ? BILLERS.find(b => b.code === req.query.biller) : null;
 
   res.render('billpay/pay', {
@@ -93,6 +94,12 @@ router.post('/pay', requireAuth, requireVerified, (req, res) => {
   const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(account_id, req.session.userId);
   if (!account) {
     req.session.error = 'Invalid account selected.';
+    return res.redirect('/billpay/pay');
+  }
+
+  const restrictionMessage = getAccountStatusMessage(account, 'pay bills');
+  if (restrictionMessage) {
+    req.session.error = restrictionMessage;
     return res.redirect('/billpay/pay');
   }
 
@@ -209,7 +216,7 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
 });
 
 router.get('/deposit/new', requireAuth, requireVerified, (req, res) => {
-  const accounts = getUserAccounts(req.session.userId);
+  const accounts = getUserAccounts(req.session.userId, { operableOnly: true });
   res.render('billpay/deposit', {
     title: 'Deposit Funds - United Credit Bank',
     page: 'billpay',
@@ -222,6 +229,12 @@ router.post('/deposit', requireAuth, requireVerified, (req, res) => {
   const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(account_id, req.session.userId);
   if (!account) {
     req.session.error = 'Invalid account.';
+    return res.redirect('/billpay/deposit/new');
+  }
+
+  const depositRestriction = getAccountStatusMessage(account, 'receive deposits');
+  if (depositRestriction) {
+    req.session.error = depositRestriction;
     return res.redirect('/billpay/deposit/new');
   }
 
@@ -250,7 +263,7 @@ router.post('/deposit', requireAuth, requireVerified, (req, res) => {
 });
 
 router.get('/withdraw/new', requireAuth, requireVerified, (req, res) => {
-  const accounts = getUserAccounts(req.session.userId);
+  const accounts = getUserAccounts(req.session.userId, { operableOnly: true });
   res.render('billpay/withdraw', {
     title: 'Withdraw Funds - United Credit Bank',
     page: 'billpay',
@@ -263,6 +276,12 @@ router.post('/withdraw', requireAuth, requireVerified, (req, res) => {
   const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(account_id, req.session.userId);
   if (!account) {
     req.session.error = 'Invalid account.';
+    return res.redirect('/billpay/withdraw/new');
+  }
+
+  const withdrawRestriction = getAccountStatusMessage(account, 'withdraw funds');
+  if (withdrawRestriction) {
+    req.session.error = withdrawRestriction;
     return res.redirect('/billpay/withdraw/new');
   }
 

@@ -47,6 +47,7 @@
           <select name="status" onchange="this.form.submit()" class="form-select">
             <option value="active" <%= account.status === 'active' ? 'selected' : '' %>>active</option>
             <option value="frozen" <%= account.status === 'frozen' ? 'selected' : '' %>>frozen</option>
+            <option value="blocked" <%= account.status === 'blocked' ? 'selected' : '' %>>blocked</option>
             <option value="closed" <%= account.status === 'closed' ? 'selected' : '' %>>closed</option>
           </select>
         </form>
@@ -106,6 +107,7 @@
           <select name="status" class="form-select">
             <option value="active" <%= account.status === 'active' ? 'selected' : '' %>>active</option>
             <option value="frozen" <%= account.status === 'frozen' ? 'selected' : '' %>>frozen</option>
+            <option value="blocked" <%= account.status === 'blocked' ? 'selected' : '' %>>blocked</option>
             <option value="closed" <%= account.status === 'closed' ? 'selected' : '' %>>closed</option>
           </select>
         </div>
@@ -137,5 +139,4 @@
 </div></div>
 
 <%- include('../partials/layouts/admin-end') -%>
-
 

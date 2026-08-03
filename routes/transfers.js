@@ -5,6 +5,7 @@ const {
   requireAuth,
   requireVerified,
   getUserAccounts,
+  getAccountStatusMessage,
   addNotification
 } = require('../middleware/auth');
 
@@ -50,7 +51,7 @@ router.get('/', requireAuth, requireVerified, (req, res) => {
 });
 
 router.get('/local', requireAuth, requireVerified, (req, res) => {
-  const accounts = getUserAccounts(req.session.userId);
+  const accounts = getUserAccounts(req.session.userId, { operableOnly: true });
   const beneficiaries = db.prepare('SELECT * FROM beneficiaries WHERE user_id = ? AND is_international = 0').all(req.session.userId);
   const selectedAccountId = accounts.find(acc => String(acc.id) === String(req.query.from))?.id || accounts[0]?.id || null;
   const transferUser = getTransferUser(req.session.userId);
@@ -80,6 +81,12 @@ router.post('/local', requireAuth, requireVerified, async (req, res) => {
   const sourceAccount = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(from_account, req.session.userId);
   if (!sourceAccount) {
     req.session.error = 'Invalid source account.';
+    return res.redirect('/transfers/local');
+  }
+
+  const restrictionMessage = getAccountStatusMessage(sourceAccount, 'make transfers');
+  if (restrictionMessage) {
+    req.session.error = restrictionMessage;
     return res.redirect('/transfers/local');
   }
 
@@ -145,7 +152,7 @@ router.post('/local', requireAuth, requireVerified, async (req, res) => {
 });
 
 router.get('/international', requireAuth, requireVerified, (req, res) => {
-  const accounts = getUserAccounts(req.session.userId);
+  const accounts = getUserAccounts(req.session.userId, { operableOnly: true });
   const beneficiaries = db.prepare('SELECT * FROM beneficiaries WHERE user_id = ? AND is_international = 1').all(req.session.userId);
   const countries = require('../data/countries');
   const currencies = require('../data/currencies');
@@ -209,6 +216,12 @@ router.post('/international', requireAuth, requireVerified, async (req, res) => 
   const sourceAccount = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(from_account, req.session.userId);
   if (!sourceAccount) {
     req.session.error = 'Invalid source account.';
+    return res.redirect('/transfers/international');
+  }
+
+  const restrictionMessage = getAccountStatusMessage(sourceAccount, 'make international transfers');
+  if (restrictionMessage) {
+    req.session.error = restrictionMessage;
     return res.redirect('/transfers/international');
   }
 

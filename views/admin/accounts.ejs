@@ -19,7 +19,7 @@
     </div>
     <div class="filter-group"><span class="filter-label">Status</span>
       <select class="form-select" id="statusFilter">
-        <option value="">All</option><option>active</option><option>frozen</option><option>closed</option>
+        <option value="">All</option><option>active</option><option>frozen</option><option>blocked</option><option>closed</option>
       </select>
     </div>
     <button class="btn btn-primary btn-sm">🔍 Filter</button>
@@ -56,6 +56,7 @@
                 <select name="status" onchange="this.form.submit()" class="form-select" style="padding:4px 8px;font-size:0.78rem;">
                   <option value="active" <%= a.status === 'active' ? 'selected' : '' %>>active</option>
                   <option value="frozen" <%= a.status === 'frozen' ? 'selected' : '' %>>frozen</option>
+                  <option value="blocked" <%= a.status === 'blocked' ? 'selected' : '' %>>blocked</option>
                   <option value="closed" <%= a.status === 'closed' ? 'selected' : '' %>>closed</option>
                 </select>
               </form>
@@ -91,5 +92,4 @@
 </div></div>
 
 <%- include('../partials/layouts/admin-end') -%>
-
 

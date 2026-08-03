@@ -1,6 +1,6 @@
 const express = require('express');
 const { db } = require('../database');
-const { requireAuth, requireVerified, getUserAccounts, generateAccountNumber } = require('../middleware/auth');
+const { requireAuth, requireVerified, getUserAccounts, getAccountStatusMessage, generateAccountNumber } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -44,7 +44,7 @@ router.get('/:id', requireAuth, (req, res) => {
   });
 });
 
-router.get('/open/new', requireAuth, (req, res) => {
+router.get('/open/new', requireAuth, requireVerified, (req, res) => {
   const accountTypes = [
     { type: 'Everyday Savings', name: 'Everyday Savings Account', min: 0, interest: '0.50%', desc: 'Perfect for everyday banking with no monthly fees' },
     { type: 'High Interest', name: 'High Interest Savings', min: 1000, interest: '4.25%', desc: 'Earn premium interest on your savings' },
@@ -59,7 +59,7 @@ router.get('/open/new', requireAuth, (req, res) => {
   });
 });
 
-router.post('/open', requireAuth, (req, res) => {
+router.post('/open', requireAuth, requireVerified, (req, res) => {
   const { account_type, initial_deposit } = req.body;
   const accountNumber = generateAccountNumber();
   const user = db.prepare('SELECT first_name, last_name FROM users WHERE id = ?').get(req.session.userId);
@@ -82,11 +82,17 @@ router.post('/open', requireAuth, (req, res) => {
   res.redirect('/accounts');
 });
 
-router.post('/:id/close', requireAuth, (req, res) => {
+router.post('/:id/close', requireAuth, requireVerified, (req, res) => {
   const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(req.params.id, req.session.userId);
   if (!account) {
     req.session.error = 'Account not found.';
     return res.redirect('/accounts');
+  }
+
+  const restrictionMessage = getAccountStatusMessage(account, 'be closed');
+  if (restrictionMessage) {
+    req.session.error = restrictionMessage;
+    return res.redirect(`/accounts/${req.params.id}`);
   }
 
   if (parseFloat(account.balance) > 0) {

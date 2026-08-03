@@ -4,6 +4,7 @@ const {
   requireAuth,
   requireVerified,
   getUserAccounts,
+  getAccountStatusMessage,
   addNotification
 } = require('../middleware/auth');
 
@@ -137,7 +138,7 @@ router.get('/apply/new', requireAuth, (req, res) => {
 });
 
 router.get('/apply', requireAuth, requireVerified, (req, res) => {
-  const accounts = getUserAccounts(req.session.userId);
+  const accounts = getUserAccounts(req.session.userId, { operableOnly: true });
   const kyc = db.prepare('SELECT * FROM kyc WHERE user_id = ? AND status = ?').get(req.session.userId, 'approved');
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
   const loanTypes = LOAN_TYPES.map(buildLoanTypeViewModel);
@@ -257,6 +258,12 @@ router.post('/:id/payment', requireAuth, (req, res) => {
   const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(from_account, req.session.userId);
   if (!account || parseFloat(account.available_balance) < parseFloat(amount)) {
     req.session.error = 'Insufficient funds.';
+    return res.redirect(`/loans/${req.params.id}`);
+  }
+
+  const restrictionMessage = getAccountStatusMessage(account, 'make loan repayments');
+  if (restrictionMessage) {
+    req.session.error = restrictionMessage;
     return res.redirect(`/loans/${req.params.id}`);
   }
 

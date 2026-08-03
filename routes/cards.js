@@ -4,6 +4,7 @@ const {
   requireAuth,
   requireVerified,
   getUserAccounts,
+  getAccountStatusMessage,
   addNotification
 } = require('../middleware/auth');
 
@@ -107,7 +108,7 @@ router.get('/apply/new', requireAuth, (req, res) => {
 });
 
 router.get('/apply', requireAuth, requireVerified, (req, res) => {
-  const accounts = getUserAccounts(req.session.userId);
+  const accounts = getUserAccounts(req.session.userId, { operableOnly: true });
   const kyc = db.prepare('SELECT * FROM kyc WHERE user_id = ? AND status = ?').get(req.session.userId, 'approved');
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
   const cardTypes = CARD_TYPES.map(buildCardTypeViewModel);
@@ -136,6 +137,12 @@ router.post('/apply', requireAuth, requireVerified, (req, res) => {
   const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(account_id, req.session.userId);
   if (!account) {
     req.session.error = 'Invalid account selected.';
+    return res.redirect('/cards/apply');
+  }
+
+  const restrictionMessage = getAccountStatusMessage(account, 'apply for a card');
+  if (restrictionMessage) {
+    req.session.error = restrictionMessage;
     return res.redirect('/cards/apply');
   }
 

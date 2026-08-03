@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const cookieSession = require('cookie-session');
 const session = require('express-session');
 const FileStore = require('session-file-store')(session);
 const cookieParser = require('cookie-parser');
@@ -36,27 +37,36 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const sessionConfig = {
-  secret: process.env.SESSION_SECRET || 'united-credit-bank-super-secret-key-2026',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
+const sessionSecret = process.env.SESSION_SECRET || 'united-credit-bank-super-secret-key-2026';
+
+if (isServerless) {
+  app.use(cookieSession({
+    name: 'ucb_session',
+    keys: [sessionSecret],
     maxAge: 24 * 60 * 60 * 1000,
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production'
-  }
-};
-
-if (!isServerless) {
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax'
+  }));
+} else {
+  const sessionConfig = {
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      maxAge: 24 * 60 * 60 * 1000,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production'
+    }
+  };
   const sessionPath = path.join(__dirname, '.sessions');
   fs.mkdirSync(sessionPath, { recursive: true });
   sessionConfig.store = new FileStore({
     path: sessionPath,
     retries: 1
   });
+  app.use(session(sessionConfig));
 }
-
-app.use(session(sessionConfig));
 
 if (isFirestoreEnabled()) {
   syncConfiguredAdminToFirestore().catch((error) => {

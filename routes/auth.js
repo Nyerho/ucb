@@ -210,10 +210,17 @@ router.post('/login', async (req, res) => {
 });
 
 router.get('/logout', requireAuth, (req, res) => {
-  req.session.destroy(() => {
-    res.clearCookie('connect.sid');
-    res.redirect('/');
-  });
+  if (typeof req.session.destroy === 'function') {
+    return req.session.destroy(() => {
+      res.clearCookie('connect.sid');
+      res.clearCookie('ucb_session');
+      res.redirect('/');
+    });
+  }
+
+  req.session = null;
+  res.clearCookie('ucb_session');
+  res.redirect('/');
 });
 
 router.get('/forgot-password', (req, res) => {

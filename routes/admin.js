@@ -7,7 +7,11 @@ const {
   addAuditLog,
   generateAccountNumber: generateAcc
 } = require('../middleware/auth');
-const { getFirestoreDashboardCustomerStats, isFirestoreEnabled } = require('../services/firestore-sync');
+const {
+  getFirestoreDashboardCustomerStats,
+  isFirestoreEnabled,
+  syncUserBundleToFirestore
+} = require('../services/firestore-sync');
 
 const router = express.Router();
 
@@ -377,6 +381,15 @@ router.post('/users/create', requireAdmin, async (req, res) => {
   });
 
   const userId = tx();
+  if (isFirestoreEnabled()) {
+    try {
+      await syncUserBundleToFirestore(userId);
+    } catch (error) {
+      console.error('Failed to sync admin-created user to Firestore:', error);
+      req.session.error = 'User was created locally, but Firestore sync failed. Please try again.';
+      return res.redirect(`/admin/users/${userId}`);
+    }
+  }
   addAuditLog(req.session.userId, 'CREATE_USER', 'user', userId, `Created user: ${first_name} ${last_name} (${email})`, req.ip);
   addNotification(userId, 'Account Created', 'Your United Credit Bank account has been created by an administrator.', 'success');
 
@@ -431,7 +444,7 @@ router.get('/users/:id', requireAdmin, (req, res) => {
   });
 });
 
-router.post('/users/:id/update', requireAdmin, (req, res) => {
+router.post('/users/:id/update', requireAdmin, async (req, res) => {
   const { first_name, last_name, email, phone, address, city, state, postcode, country, date_of_birth, is_verified, is_frozen } = req.body;
   const userId = req.params.id;
 
@@ -446,6 +459,16 @@ router.post('/users/:id/update', requireAdmin, (req, res) => {
     WHERE id = ?
   `).run(first_name, last_name, email, phone, address, city, state, postcode, country || 'Australia', date_of_birth || null, is_verified ? 1 : 0, is_frozen ? 1 : 0, userId);
 
+  if (isFirestoreEnabled()) {
+    try {
+      await syncUserBundleToFirestore(userId);
+    } catch (error) {
+      console.error('Failed to sync updated user to Firestore:', error);
+      req.session.error = 'User was updated locally, but Firestore sync failed. Please try again.';
+      return res.redirect(`/admin/users/${userId}`);
+    }
+  }
+
   addAuditLog(req.session.userId, 'UPDATE_USER', 'user', userId, `Updated details for ${first_name} ${last_name}`, req.ip);
   addNotification(userId, 'Account Updated', 'Your account details have been updated by an administrator.', 'info');
 
@@ -457,7 +480,7 @@ router.post('/users/:id/update', requireAdmin, (req, res) => {
   res.redirect(`/admin/users/${userId}`);
 });
 
-router.post('/users/:id/freeze', requireAdmin, (req, res) => {
+router.post('/users/:id/freeze', requireAdmin, async (req, res) => {
   const userId = req.params.id;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!user) {
@@ -467,13 +490,22 @@ router.post('/users/:id/freeze', requireAdmin, (req, res) => {
   const newStatus = user.is_frozen === 1 ? 0 : 1;
   db.prepare('UPDATE users SET is_frozen = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newStatus, userId);
 
+  if (isFirestoreEnabled()) {
+    try {
+      await syncUserBundleToFirestore(userId);
+    } catch (error) {
+      console.error('Failed to sync user freeze state to Firestore:', error);
+      return res.json({ success: false, message: 'User updated locally, but Firestore sync failed.' });
+    }
+  }
+
   addAuditLog(req.session.userId, newStatus ? 'FREEZE_USER' : 'UNFREEZE_USER', 'user', userId, `${newStatus ? 'Frozen' : 'Unfrozen'} account for ${user.first_name} ${user.last_name}`, req.ip);
   addNotification(userId, newStatus ? 'Account Frozen' : 'Account Unfrozen', newStatus ? 'Your account has been frozen.' : 'Your account has been unfrozen.', newStatus ? 'warning' : 'success');
 
   res.json({ success: true, frozen: newStatus === 1 });
 });
 
-router.get('/users/:id/freeze', requireAdmin, (req, res) => {
+router.get('/users/:id/freeze', requireAdmin, async (req, res) => {
   const userId = req.params.id;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!user) {
@@ -483,6 +515,16 @@ router.get('/users/:id/freeze', requireAdmin, (req, res) => {
 
   const newStatus = user.is_frozen === 1 ? 0 : 1;
   db.prepare('UPDATE users SET is_frozen = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newStatus, userId);
+
+  if (isFirestoreEnabled()) {
+    try {
+      await syncUserBundleToFirestore(userId);
+    } catch (error) {
+      console.error('Failed to sync user freeze state to Firestore:', error);
+      req.session.error = 'User was updated locally, but Firestore sync failed.';
+      return res.redirect(req.get('referer') || `/admin/users/${userId}`);
+    }
+  }
   addAuditLog(req.session.userId, newStatus ? 'FREEZE_USER' : 'UNFREEZE_USER', 'user', userId, `${newStatus ? 'Frozen' : 'Unfrozen'} account for ${user.first_name} ${user.last_name}`, req.ip);
   addNotification(userId, newStatus ? 'Account Frozen' : 'Account Unfrozen', newStatus ? 'Your account has been frozen.' : 'Your account has been unfrozen.', newStatus ? 'warning' : 'success');
 
@@ -501,6 +543,16 @@ router.post('/users/:id/reset-password', requireAdmin, async (req, res) => {
 
   const hashed = await bcrypt.hash(password, 10);
   db.prepare('UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(hashed, userId);
+
+  if (isFirestoreEnabled()) {
+    try {
+      await syncUserBundleToFirestore(userId);
+    } catch (error) {
+      console.error('Failed to sync password reset to Firestore:', error);
+      req.session.error = 'Password was updated locally, but Firestore sync failed.';
+      return res.redirect(`/admin/users/${userId}`);
+    }
+  }
   addAuditLog(req.session.userId, 'RESET_PASSWORD', 'user', userId, `Reset password for user ID ${userId}`, req.ip);
   addNotification(userId, 'Password Reset', 'Your password has been reset by an administrator.', 'info');
 

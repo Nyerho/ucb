@@ -44,7 +44,11 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()');
   if (process.env.NODE_ENV === 'production') {
-    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+    const isSecureRequest = Boolean(req.secure || forwardedProto === 'https');
+    if (isSecureRequest) {
+      res.setHeader('Strict-Transport-Security', 'max-age=0');
+    }
   }
   next();
 });

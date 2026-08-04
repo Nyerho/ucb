@@ -13,10 +13,18 @@ const {
   syncAccountToFirestore,
   syncTransactionToFirestore
 } = require('../services/firestore-sync');
+const { sendTransactionActivityEmailById } = require('../services/email');
 
 const router = express.Router();
 
 const OUTGOING_TYPES = new Set(['local_transfer', 'international_transfer', 'withdrawal', 'bill_payment', 'loan_payment']);
+
+function queueTransactionEmail(txnId, note) {
+  if (!txnId) return;
+  sendTransactionActivityEmailById(txnId, note ? { note } : {}).catch((error) => {
+    console.error(`Failed to send transaction email for txn ${txnId}:`, error);
+  });
+}
 
 function getTransferUser(userId) {
   return db.prepare('SELECT id, first_name, last_name, transfer_pin_hash FROM users WHERE id = ?').get(userId);
@@ -152,6 +160,7 @@ router.post('/local', requireAuth, requireVerified, async (req, res) => {
       console.error('Failed to sync local transfer to Firestore:', err);
     }
   }
+  queueTransactionEmail(txnId, status === 'completed' ? 'Your transfer has been completed.' : 'Your transfer is pending approval.');
 
   if (save_beneficiary && beneficiary_name) {
     const exists = db.prepare('SELECT id FROM beneficiaries WHERE user_id = ? AND account_number = ?').get(req.session.userId, to_account);
@@ -289,6 +298,7 @@ router.post('/international', requireAuth, requireVerified, async (req, res) => 
       console.error('Failed to sync international transfer to Firestore:', err);
     }
   }
+  queueTransactionEmail(txnId, 'Your international transfer request has been submitted.');
 
   if (save_beneficiary && beneficiary_name) {
     db.prepare(`
@@ -361,7 +371,7 @@ router.get('/:id', requireAuth, (req, res) => {
   });
 });
 
-router.post('/:id/cancel', requireAuth, (req, res) => {
+router.post('/:id/cancel', requireAuth, async (req, res) => {
   const transaction = db.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ?').get(req.params.id, req.session.userId);
   if (!transaction || transaction.status !== 'pending') {
     req.session.error = 'Cannot cancel this transaction.';
@@ -373,7 +383,21 @@ router.post('/:id/cancel', requireAuth, (req, res) => {
   db.prepare('UPDATE accounts SET available_balance = available_balance + ? WHERE id = ?').run(refund, account.id);
   db.prepare('UPDATE transactions SET status = ? WHERE id = ?').run('cancelled', req.params.id);
 
+  if (isFirestoreEnabled()) {
+    try {
+      const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(account.id);
+      const updatedTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(req.params.id);
+      await Promise.all([
+        syncAccountToFirestore(updatedAccount),
+        syncTransactionToFirestore(updatedTxn)
+      ]);
+    } catch (error) {
+      console.error('Failed to sync cancelled transfer to Firestore:', error);
+    }
+  }
+
   addNotification(req.session.userId, 'Transfer Cancelled', `Transfer ${transaction.id} has been cancelled`, 'info');
+  queueTransactionEmail(req.params.id, 'This transaction was cancelled.');
   req.session.success = 'Transfer cancelled successfully.';
   res.redirect(`/transfers/${req.params.id}`);
 });

@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const Layer = require('express/lib/router/layer');
 const path = require('path');
 const fs = require('fs');
 const cookieSession = require('cookie-session');
@@ -18,6 +19,24 @@ const {
   backfillLocalUsersToFirestore
 } = require('./services/firestore-sync');
 const { logFirestoreDiagnostics, getFirestoreAdminDiagnostics, getResolvedProjectId } = require('./lib/firebase-admin');
+
+const originalLayerHandleRequest = Layer.prototype.handle_request;
+Layer.prototype.handle_request = function patchedAsyncHandleRequest(req, res, next) {
+  const fn = this.handle;
+  if (fn.length > 3) {
+    return originalLayerHandleRequest.call(this, req, res, next);
+  }
+
+  try {
+    const returned = fn(req, res, next);
+    if (returned && typeof returned.then === 'function' && typeof returned.catch === 'function') {
+      returned.catch(next);
+    }
+    return returned;
+  } catch (error) {
+    return next(error);
+  }
+};
 
 const app = express();
 const PORT = process.env.PORT || 3000;

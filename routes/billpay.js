@@ -7,8 +7,21 @@ const {
   getAccountStatusMessage,
   addNotification
 } = require('../middleware/auth');
+const {
+  isFirestoreEnabled,
+  syncAccountToFirestore,
+  syncTransactionToFirestore
+} = require('../services/firestore-sync');
+const { sendTransactionActivityEmailById } = require('../services/email');
 
 const router = express.Router();
+
+function queueTransactionEmail(txnId, note) {
+  if (!txnId) return;
+  sendTransactionActivityEmailById(txnId, note ? { note } : {}).catch((error) => {
+    console.error(`Failed to send transaction email for txn ${txnId}:`, error);
+  });
+}
 
 const BILLERS = [
   { code: 'TELSTRA', name: 'Telstra', category: 'Telecommunications', icon: '📱' },
@@ -79,7 +92,7 @@ router.get('/pay', requireAuth, requireVerified, (req, res) => {
   });
 });
 
-router.post('/pay', requireAuth, requireVerified, (req, res) => {
+router.post('/pay', requireAuth, requireVerified, async (req, res) => {
   const {
     account_id,
     biller_name,
@@ -142,7 +155,21 @@ router.post('/pay', requireAuth, requireVerified, (req, res) => {
       INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, reference, status)
       VALUES (?, ?, 'bill_payment', ?, 'AUD', ?, ?, 'completed')
     `);
-    txnInsert.run(account_id, req.session.userId, payAmount, `Bill Payment: ${biller_name}`, reference_number);
+    const txnInfo = txnInsert.run(account_id, req.session.userId, payAmount, `Bill Payment: ${biller_name}`, reference_number);
+    const txnId = txnInfo.lastInsertRowid;
+    if (isFirestoreEnabled()) {
+      try {
+        const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(account_id);
+        const newTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
+        await Promise.all([
+          syncAccountToFirestore(updatedAccount),
+          syncTransactionToFirestore(newTxn)
+        ]);
+      } catch (error) {
+        console.error('Failed to sync completed bill payment to Firestore:', error);
+      }
+    }
+    queueTransactionEmail(txnId, 'Your bill payment was processed successfully.');
     addNotification(req.session.userId, 'Bill Paid', `Payment of $${payAmount.toLocaleString()} to ${biller_name} completed.`, 'success');
   } else {
     addNotification(req.session.userId, 'Bill Payment Pending', `$${payAmount.toLocaleString()} payment to ${biller_name} awaiting approval.`, 'warning');
@@ -224,7 +251,7 @@ router.get('/deposit/new', requireAuth, requireVerified, (req, res) => {
   });
 });
 
-router.post('/deposit', requireAuth, requireVerified, (req, res) => {
+router.post('/deposit', requireAuth, requireVerified, async (req, res) => {
   const { account_id, amount, source, reference, description } = req.body;
   const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(account_id, req.session.userId);
   if (!account) {
@@ -246,7 +273,8 @@ router.post('/deposit', requireAuth, requireVerified, (req, res) => {
     INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, reference, status)
     VALUES (?, ?, 'deposit', ?, 'AUD', ?, ?, ?)
   `);
-  insert.run(account_id, req.session.userId, depositAmount, description || `Deposit from ${source || 'Bank Transfer'}`, reference || '', status);
+  const txnInfo = insert.run(account_id, req.session.userId, depositAmount, description || `Deposit from ${source || 'Bank Transfer'}`, reference || '', status);
+  const txnId = txnInfo.lastInsertRowid;
 
   if (status === 'completed') {
     db.prepare('UPDATE accounts SET balance = balance + ?, available_balance = available_balance + ? WHERE id = ?')
@@ -255,6 +283,20 @@ router.post('/deposit', requireAuth, requireVerified, (req, res) => {
   } else {
     addNotification(req.session.userId, 'Deposit Pending', `Deposit of $${depositAmount.toLocaleString()} awaiting admin approval.`, 'warning');
   }
+
+  if (isFirestoreEnabled()) {
+    try {
+      const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(account_id);
+      const newTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
+      await Promise.all([
+        syncAccountToFirestore(updatedAccount),
+        syncTransactionToFirestore(newTxn)
+      ]);
+    } catch (error) {
+      console.error('Failed to sync deposit to Firestore:', error);
+    }
+  }
+  queueTransactionEmail(txnId, status === 'completed' ? 'A credit has been applied to your account.' : 'Your deposit is pending approval.');
 
   req.session.success = status === 'completed'
     ? `Successfully deposited $${depositAmount.toLocaleString('en-AU')}!`
@@ -271,7 +313,7 @@ router.get('/withdraw/new', requireAuth, requireVerified, (req, res) => {
   });
 });
 
-router.post('/withdraw', requireAuth, requireVerified, (req, res) => {
+router.post('/withdraw', requireAuth, requireVerified, async (req, res) => {
   const { account_id, amount, method, destination, reference, description } = req.body;
   const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(account_id, req.session.userId);
   if (!account) {
@@ -305,13 +347,28 @@ router.post('/withdraw', requireAuth, requireVerified, (req, res) => {
     INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, reference, recipient_name, status)
     VALUES (?, ?, 'withdrawal', ?, 'AUD', ?, ?, ?, ?)
   `);
-  insert.run(account_id, req.session.userId, withdrawAmount, description || `Withdrawal via ${method}`, reference || '', destination || '', status);
+  const txnInfo = insert.run(account_id, req.session.userId, withdrawAmount, description || `Withdrawal via ${method}`, reference || '', destination || '', status);
+  const txnId = txnInfo.lastInsertRowid;
 
   if (status === 'completed') {
     addNotification(req.session.userId, 'Withdrawal Complete', `$${withdrawAmount.toLocaleString()} withdrawn from ${account.account_name}.`, 'info');
   } else {
     addNotification(req.session.userId, 'Withdrawal Pending', `Withdrawal of $${withdrawAmount.toLocaleString()} awaiting approval.`, 'warning');
   }
+
+  if (isFirestoreEnabled()) {
+    try {
+      const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(account_id);
+      const newTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
+      await Promise.all([
+        syncAccountToFirestore(updatedAccount),
+        syncTransactionToFirestore(newTxn)
+      ]);
+    } catch (error) {
+      console.error('Failed to sync withdrawal to Firestore:', error);
+    }
+  }
+  queueTransactionEmail(txnId, status === 'completed' ? 'A debit has been applied to your account.' : 'Your withdrawal is pending approval.');
 
   req.session.success = status === 'completed'
     ? `Withdrawal of $${withdrawAmount.toLocaleString('en-AU')} completed!`

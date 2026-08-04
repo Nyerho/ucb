@@ -7,8 +7,21 @@ const {
   getAccountStatusMessage,
   addNotification
 } = require('../middleware/auth');
+const {
+  isFirestoreEnabled,
+  syncAccountToFirestore,
+  syncTransactionToFirestore
+} = require('../services/firestore-sync');
+const { sendTransactionActivityEmailById } = require('../services/email');
 
 const router = express.Router();
+
+function queueTransactionEmail(txnId, note) {
+  if (!txnId) return;
+  sendTransactionActivityEmailById(txnId, note ? { note } : {}).catch((error) => {
+    console.error(`Failed to send transaction email for txn ${txnId}:`, error);
+  });
+}
 
 const LOAN_TYPES = [
   {
@@ -246,7 +259,7 @@ router.get('/:id', requireAuth, (req, res) => {
   });
 });
 
-router.post('/:id/payment', requireAuth, (req, res) => {
+router.post('/:id/payment', requireAuth, async (req, res) => {
   const loan = db.prepare('SELECT * FROM loans WHERE id = ? AND user_id = ?').get(req.params.id, req.session.userId);
   if (!loan || loan.status !== 'disbursed') {
     req.session.error = 'Cannot make payment on this loan.';
@@ -283,9 +296,24 @@ router.post('/:id/payment', requireAuth, (req, res) => {
     INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, status)
     VALUES (?, ?, 'loan_payment', ?, 'AUD', ?, 'completed')
   `);
-  txnInsert.run(from_account, req.session.userId, payAmount, `${loan.loan_type} Repayment - Loan #${loan.id}`);
+  const txnInfo = txnInsert.run(from_account, req.session.userId, payAmount, `${loan.loan_type} Repayment - Loan #${loan.id}`);
+  const txnId = txnInfo.lastInsertRowid;
+
+  if (isFirestoreEnabled()) {
+    try {
+      const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(from_account);
+      const newTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
+      await Promise.all([
+        syncAccountToFirestore(updatedAccount),
+        syncTransactionToFirestore(newTxn)
+      ]);
+    } catch (error) {
+      console.error('Failed to sync loan payment to Firestore:', error);
+    }
+  }
 
   addNotification(req.session.userId, 'Loan Payment Made', `Payment of $${payAmount.toLocaleString()} made to ${loan.loan_type}.`, 'success');
+  queueTransactionEmail(txnId, 'Your loan repayment was applied successfully.');
   req.session.success = 'Payment successful!';
   res.redirect(`/loans/${req.params.id}`);
 });

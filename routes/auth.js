@@ -4,7 +4,13 @@ const crypto = require('crypto');
 const { body, validationResult } = require('express-validator');
 const { db, generateAccountNumber } = require('../database');
 const { requireAuth } = require('../middleware/auth');
-const { getFirebaseAuth } = require('../lib/firebase-admin');
+const { syncLocalUserToFirebaseAuth } = require('../lib/firebase-admin');
+const {
+  getAppBaseUrl,
+  sendLoginWelcomeEmail,
+  sendPasswordResetEmail,
+  sendPasswordChangedEmail
+} = require('../services/email');
 const {
   syncUserBundleToFirestore,
   hydrateUserFromFirestoreByEmail,
@@ -14,72 +20,25 @@ const {
 
 const router = express.Router();
 
-function isFirebaseUserNotFound(error) {
-  const code = String(error && error.code ? error.code : '');
-  return code === 'auth/user-not-found' || code.endsWith('/user-not-found');
+function hashResetToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
 }
 
-function buildFirebaseAuthPayload(user, plainPassword) {
-  const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim();
-  const payload = {
-    email: (user.email || '').trim().toLowerCase(),
-    displayName: fullName || undefined,
-    emailVerified: Number(user.is_verified) === 1,
-    disabled: Number(user.is_frozen) === 1
-  };
-
-  if (plainPassword) {
-    payload.password = plainPassword;
+function getValidPasswordResetRecord(rawToken) {
+  if (!rawToken) {
+    return null;
   }
 
-  return payload;
-}
-
-async function syncLocalUserToFirebaseAuth(user, plainPassword) {
-  const firebaseAuth = getFirebaseAuth();
-  if (!firebaseAuth || !user || !user.email) {
-    return { synced: false, skipped: true };
-  }
-
-  const desiredUid = `ucb-${user.id}`;
-  const authPayload = buildFirebaseAuthPayload(user, plainPassword);
-  let authRecord = null;
-
-  try {
-    authRecord = await firebaseAuth.getUser(desiredUid);
-  } catch (error) {
-    if (!isFirebaseUserNotFound(error)) {
-      throw error;
-    }
-  }
-
-  if (!authRecord) {
-    try {
-      authRecord = await firebaseAuth.getUserByEmail(authPayload.email);
-    } catch (error) {
-      if (!isFirebaseUserNotFound(error)) {
-        throw error;
-      }
-    }
-  }
-
-  if (authRecord) {
-    authRecord = await firebaseAuth.updateUser(authRecord.uid, authPayload);
-  } else {
-    authRecord = await firebaseAuth.createUser({
-      uid: desiredUid,
-      ...authPayload,
-      password: authPayload.password || crypto.randomBytes(24).toString('hex')
-    });
-  }
-
-  await firebaseAuth.setCustomUserClaims(authRecord.uid, {
-    local_user_id: Number(user.id),
-    role: user.role || (Number(user.is_admin) === 1 ? 'super_admin' : 'customer'),
-    is_admin: Number(user.is_admin) === 1
-  });
-
-  return { synced: true, uid: authRecord.uid };
+  return db.prepare(`
+    SELECT pr.*, u.email, u.first_name, u.last_name
+    FROM password_resets pr
+    JOIN users u ON u.id = pr.user_id
+    WHERE pr.token_hash = ?
+      AND pr.used_at IS NULL
+      AND DATETIME(pr.expires_at) > DATETIME('now')
+    ORDER BY pr.id DESC
+    LIMIT 1
+  `).get(hashResetToken(rawToken));
 }
 
 router.get('/register', (req, res) => {
@@ -364,6 +323,13 @@ router.post('/login', async (req, res) => {
     console.error(`Failed to sync Firebase Authentication user for ${normalizedEmail}:`, error);
   });
 
+  sendLoginWelcomeEmail(user, {
+    ip: req.ip,
+    userAgent: req.get('user-agent')
+  }).catch((error) => {
+    console.error(`Failed to send login email for ${normalizedEmail}:`, error);
+  });
+
   req.session.userId = user.id;
   const isAdmin = Number(user.is_admin) === 1 ? 1 : 0;
 
@@ -404,8 +370,103 @@ router.get('/forgot-password', (req, res) => {
   });
 });
 
-router.post('/forgot-password', (req, res) => {
+router.post('/forgot-password', async (req, res) => {
+  const normalizedEmail = String(req.body.email || '').trim().toLowerCase();
+  const user = normalizedEmail
+    ? db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail)
+    : null;
+
+  if (user) {
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashResetToken(rawToken);
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+
+    db.prepare('DELETE FROM password_resets WHERE user_id = ? OR DATETIME(expires_at) <= DATETIME(\'now\')').run(user.id);
+    db.prepare(`
+      INSERT INTO password_resets (user_id, token_hash, expires_at)
+      VALUES (?, ?, ?)
+    `).run(user.id, tokenHash, expiresAt);
+
+    const resetUrl = `${getAppBaseUrl()}/auth/reset-password?token=${rawToken}`;
+    try {
+      await sendPasswordResetEmail(user, resetUrl);
+    } catch (error) {
+      console.error(`Failed to send password reset email for ${normalizedEmail}:`, error);
+    }
+  }
+
   req.session.success = 'If your email is registered, you will receive password reset instructions shortly.';
+  res.redirect('/auth/login');
+});
+
+router.get('/reset-password', (req, res) => {
+  const token = String(req.query.token || '').trim();
+  const resetRecord = getValidPasswordResetRecord(token);
+  if (!resetRecord) {
+    req.session.error = 'This password reset link is invalid or has expired.';
+    return res.redirect('/auth/forgot-password');
+  }
+
+  res.render('auth/reset', {
+    title: 'Reset Password - United Credit Bank',
+    page: 'reset-password',
+    token
+  });
+});
+
+router.post('/reset-password', async (req, res) => {
+  const token = String(req.body.token || '').trim();
+  const password = String(req.body.password || '');
+  const confirmPassword = String(req.body.confirm_password || '');
+  const resetRecord = getValidPasswordResetRecord(token);
+
+  if (!resetRecord) {
+    req.session.error = 'This password reset link is invalid or has expired.';
+    return res.redirect('/auth/forgot-password');
+  }
+
+  if (password.length < 8) {
+    return res.render('auth/reset', {
+      title: 'Reset Password - United Credit Bank',
+      page: 'reset-password',
+      token,
+      error: 'Password must be at least 8 characters long.'
+    });
+  }
+
+  if (password !== confirmPassword) {
+    return res.render('auth/reset', {
+      title: 'Reset Password - United Credit Bank',
+      page: 'reset-password',
+      token,
+      error: 'Passwords do not match.'
+    });
+  }
+
+  const hashed = await bcrypt.hash(password, 10);
+  db.prepare('UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(hashed, resetRecord.user_id);
+  db.prepare('UPDATE password_resets SET used_at = CURRENT_TIMESTAMP WHERE id = ?').run(resetRecord.id);
+  db.prepare('DELETE FROM password_resets WHERE user_id = ? AND id != ?').run(resetRecord.user_id, resetRecord.id);
+
+  const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(resetRecord.user_id);
+
+  if (isFirestoreEnabled()) {
+    try {
+      await syncUserBundleToFirestore(resetRecord.user_id);
+    } catch (error) {
+      console.error('Failed to sync reset password to Firestore:', error);
+    }
+  }
+
+  syncLocalUserToFirebaseAuth(updatedUser, password).catch((error) => {
+    console.error(`Failed to sync Firebase Authentication password for ${updatedUser.email}:`, error);
+  });
+
+  sendPasswordChangedEmail(updatedUser).catch((error) => {
+    console.error(`Failed to send password changed email for ${updatedUser.email}:`, error);
+  });
+
+  req.session.success = 'Your password has been reset successfully. Please login with your new password.';
   res.redirect('/auth/login');
 });
 

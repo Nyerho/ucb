@@ -220,6 +220,55 @@ a:hover {
   gap: 10px;
 }
 
+.jivo-chat-launcher {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1200;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 18px 12px 14px;
+  background: linear-gradient(135deg, #c8102e, #7a0a1d);
+  color: #fff;
+  box-shadow: 0 12px 30px rgba(122, 10, 29, 0.28);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.jivo-chat-launcher:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 34px rgba(122, 10, 29, 0.34);
+}
+
+.jivo-chat-launcher__icon {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.jivo-chat-launcher__icon svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
+.jivo-chat-launcher__label {
+  line-height: 1;
+}
+
+.jivo-chat-launcher.is-loading {
+  opacity: 0.9;
+  cursor: progress;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

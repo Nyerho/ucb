@@ -34,15 +34,40 @@ router.post('/register', [
       throw new Error('Passwords do not match');
     }
     return true;
+  }),
+  body('terms').custom((value, { req }) => {
+    if (!value) {
+      throw new Error('You must agree to the Terms & Conditions');
+    }
+    return true;
   })
 ], async (req, res) => {
+  const entryTag = `[UCB-REGISTER-ENTRY][${Date.now()}]`;
+  console.log(`${entryTag} POST /auth/register RECEIVED body_keys=${Object.keys(req.body).join(',')}`);
+  console.log(`${entryTag} first_name="${req.body.first_name}" last_name="${req.body.last_name}" email="${req.body.email}" terms="${req.body.terms}"`);
+
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    const errMsgs = errors.array().map(e => e.msg).join('; ');
+    console.log(`${entryTag} express-validator FAILED: ${errMsgs}`);
     return res.render('auth/register', {
       title: 'Open Account - United Credit Bank',
       page: 'register',
       old: req.body,
-      errors: errors.array()
+      errors: errors.array(),
+      error: null
+    });
+  }
+
+  if (!req.body.terms) {
+    console.log(`${entryTag} SERVER-SIDE terms check FAILED (req.body.terms falsy). Rendering with error.`);
+    const termErrMsg = 'You must agree to the Terms & Conditions to continue.';
+    return res.render('auth/register', {
+      title: 'Open Account - United Credit Bank',
+      page: 'register',
+      old: req.body,
+      errors: [{ msg: termErrMsg }],
+      error: termErrMsg
     });
   }
 
@@ -51,11 +76,14 @@ router.post('/register', [
 
   const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(normalizedEmail);
   if (existingUser) {
-    req.session.error = 'An account with this email already exists.';
+    console.log(`${entryTag} Duplicate email in SQLite: ${normalizedEmail}`);
+    const dupErr = 'An account with this email already exists.';
+    req.session.error = dupErr;
     return res.render('auth/register', {
       title: 'Open Account - United Credit Bank',
       page: 'register',
-      old: req.body
+      old: req.body,
+      error: dupErr
     });
   }
 
@@ -63,20 +91,25 @@ router.post('/register', [
     try {
       const existsRemotely = await firestoreUserExistsByEmail(normalizedEmail);
       if (existsRemotely) {
-        req.session.error = 'An account with this email already exists.';
+        console.log(`${entryTag} Duplicate email in Firestore: ${normalizedEmail}`);
+        const dupErr = 'An account with this email already exists.';
+        req.session.error = dupErr;
         return res.render('auth/register', {
           title: 'Open Account - United Credit Bank',
           page: 'register',
-          old: req.body
+          old: req.body,
+          error: dupErr
         });
       }
     } catch (error) {
-      console.error('Failed checking Firestore for existing user:', error);
-      req.session.error = 'We could not verify your details right now. Please try again.';
+      console.error(`${entryTag} Failed checking Firestore for existing user:`, error);
+      const sysErr = 'We could not verify your details right now. Please try again.';
+      req.session.error = sysErr;
       return res.render('auth/register', {
         title: 'Open Account - United Credit Bank',
         page: 'register',
-        old: req.body
+        old: req.body,
+        error: sysErr
       });
     }
   }
@@ -142,11 +175,13 @@ router.post('/register', [
       } catch (rbErr) {
         console.error(`${requestTag} rolling_back_local_sqlite status=FAILED err=${String(rbErr.message || rbErr)}`);
       }
-      req.session.error = 'Account creation could not be completed right now. Please try again.';
+      const syncErr = 'Account creation could not be completed right now. Please try again.';
+      req.session.error = syncErr;
       return res.render('auth/register', {
         title: 'Open Account - United Credit Bank',
         page: 'register',
-        old: req.body
+        old: req.body,
+        error: syncErr
       });
     }
   } else {
@@ -173,11 +208,13 @@ router.post('/register', [
     console.warn(`${requestTag} step=local_sqlite_rollback reason=FIRESTORE_REQUIRE_SYNC_ON_REGISTER=true and sync skipped`);
     db.prepare('DELETE FROM accounts WHERE user_id = ?').run(result.lastInsertRowid);
     db.prepare('DELETE FROM users WHERE id = ?').run(result.lastInsertRowid);
-    req.session.error = 'Account creation could not be completed right now. The remote user database is unavailable. Please try again later.';
+    const requireErr = 'Account creation could not be completed right now. The remote user database is unavailable. Please try again later.';
+    req.session.error = requireErr;
     return res.render('auth/register', {
       title: 'Open Account - United Credit Bank',
       page: 'register',
-      old: req.body
+      old: req.body,
+      error: requireErr
     });
   }
 

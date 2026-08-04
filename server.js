@@ -153,6 +153,42 @@ app.use((req, res, next) => {
   res.locals.firebaseWebConfig = firebaseWebConfig;
   delete req.session.error;
   delete req.session.success;
+
+  const originalRender = res.render.bind(res);
+  res.render = function patchedRender(view, options, callback) {
+    let opts = options;
+    let cb = callback;
+    if (typeof opts === 'function') {
+      cb = opts;
+      opts = {};
+    }
+    if (typeof opts !== 'object' || opts === null) {
+      opts = {};
+    }
+
+    if (typeof opts.error === 'undefined') {
+      if (res.locals.error) {
+        opts.error = res.locals.error;
+      } else if (req.session && req.session.error) {
+        opts.error = req.session.error;
+        delete req.session.error;
+        res.locals.error = opts.error;
+      }
+    }
+
+    if (typeof opts.success === 'undefined') {
+      if (res.locals.success) {
+        opts.success = res.locals.success;
+      } else if (req.session && req.session.success) {
+        opts.success = req.session.success;
+        delete req.session.success;
+        res.locals.success = opts.success;
+      }
+    }
+
+    return originalRender(view, opts, cb);
+  };
+
   next();
 });
 

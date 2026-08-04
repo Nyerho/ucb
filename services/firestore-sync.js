@@ -123,6 +123,42 @@ function toFirestoreAccount(account) {
   };
 }
 
+const TRANSACTIONS_COLLECTION = process.env.FIRESTORE_TRANSACTIONS_COLLECTION || 'transactions';
+
+function toFirestoreTransaction(txn) {
+  return {
+    sql_id: asInt(txn.id),
+    account_id: asInt(txn.account_id),
+    user_id: asInt(txn.user_id),
+    account_ref: String(txn.account_id),
+    user_ref: String(txn.user_id),
+    transaction_type: txn.transaction_type || '',
+    amount: asFloat(txn.amount),
+    currency: txn.currency || 'AUD',
+    description: txn.description || '',
+    reference: txn.reference || '',
+    recipient_name: txn.recipient_name || '',
+    recipient_account: txn.recipient_account || '',
+    recipient_bsb: txn.recipient_bsb || '',
+    recipient_bank: txn.recipient_bank || '',
+    swift_code: txn.swift_code || '',
+    iban: txn.iban || '',
+    country: txn.country || 'Australia',
+    status: txn.status || 'pending',
+    fee: asFloat(txn.fee),
+    exchange_rate: txn.exchange_rate ? asFloat(txn.exchange_rate) : null,
+    converted_amount: txn.converted_amount ? asFloat(txn.converted_amount) : null,
+    approved_by: txn.approved_by ? asInt(txn.approved_by) : null,
+    approved_at: normalizeDateString(txn.approved_at),
+    approved_at_ts: txn.approved_at ? toFirestoreDate(txn.approved_at) : null,
+    rejection_reason: txn.rejection_reason || '',
+    created_at: normalizeDateString(txn.created_at) || new Date().toISOString(),
+    created_at_ts: toFirestoreDate(txn.created_at),
+    updated_at: new Date().toISOString(),
+    updated_at_ts: new Date()
+  };
+}
+
 function upsertLocalUser(userDoc, explicitId) {
   const userId = asInt(userDoc.sql_id || explicitId || userDoc.id);
   if (!userId) {
@@ -243,6 +279,80 @@ function upsertLocalAccount(accountDoc, explicitId) {
   return db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId);
 }
 
+function upsertLocalTransaction(txnDoc, explicitId) {
+  const txnId = asInt(txnDoc.sql_id || explicitId || txnDoc.id);
+  const accountId = asInt(txnDoc.account_id || txnDoc.account_ref);
+  const userId = asInt(txnDoc.user_id || txnDoc.user_ref);
+  if (!txnId || !accountId || !userId) {
+    return null;
+  }
+
+  const payload = {
+    id: txnId,
+    account_id: accountId,
+    user_id: userId,
+    transaction_type: txnDoc.transaction_type || '',
+    amount: asFloat(txnDoc.amount),
+    currency: txnDoc.currency || 'AUD',
+    description: txnDoc.description || '',
+    reference: txnDoc.reference || '',
+    recipient_name: txnDoc.recipient_name || '',
+    recipient_account: txnDoc.recipient_account || '',
+    recipient_bsb: txnDoc.recipient_bsb || '',
+    recipient_bank: txnDoc.recipient_bank || '',
+    swift_code: txnDoc.swift_code || '',
+    iban: txnDoc.iban || '',
+    country: txnDoc.country || 'Australia',
+    status: txnDoc.status || 'pending',
+    fee: asFloat(txnDoc.fee),
+    exchange_rate: txnDoc.exchange_rate ? asFloat(txnDoc.exchange_rate) : null,
+    converted_amount: txnDoc.converted_amount ? asFloat(txnDoc.converted_amount) : null,
+    approved_by: txnDoc.approved_by ? asInt(txnDoc.approved_by) : null,
+    approved_at: toSqlDateTime(txnDoc.approved_at),
+    rejection_reason: txnDoc.rejection_reason || '',
+    created_at: toSqlDateTime(txnDoc.created_at) || toSqlDateTime(new Date())
+  };
+
+  db.prepare(`
+    INSERT INTO transactions (
+      id, account_id, user_id, transaction_type, amount, currency, description, reference,
+      recipient_name, recipient_account, recipient_bsb, recipient_bank, swift_code, iban,
+      country, status, fee, exchange_rate, converted_amount, approved_by, approved_at,
+      rejection_reason, created_at
+    )
+    VALUES (
+      @id, @account_id, @user_id, @transaction_type, @amount, @currency, @description, @reference,
+      @recipient_name, @recipient_account, @recipient_bsb, @recipient_bank, @swift_code, @iban,
+      @country, @status, @fee, @exchange_rate, @converted_amount, @approved_by, @approved_at,
+      @rejection_reason, @created_at
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      account_id = excluded.account_id,
+      user_id = excluded.user_id,
+      transaction_type = excluded.transaction_type,
+      amount = excluded.amount,
+      currency = excluded.currency,
+      description = excluded.description,
+      reference = excluded.reference,
+      recipient_name = excluded.recipient_name,
+      recipient_account = excluded.recipient_account,
+      recipient_bsb = excluded.recipient_bsb,
+      recipient_bank = excluded.recipient_bank,
+      swift_code = excluded.swift_code,
+      iban = excluded.iban,
+      country = excluded.country,
+      status = excluded.status,
+      fee = excluded.fee,
+      exchange_rate = excluded.exchange_rate,
+      converted_amount = excluded.converted_amount,
+      approved_by = excluded.approved_by,
+      approved_at = excluded.approved_at,
+      rejection_reason = excluded.rejection_reason
+  `).run(payload);
+
+  return db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
+}
+
 async function syncUserToFirestore(user) {
   const firestore = getFirestore();
   if (!firestore || !user || !user.id) {
@@ -263,6 +373,36 @@ async function syncAccountToFirestore(account) {
   return true;
 }
 
+async function syncTransactionToFirestore(txn) {
+  const firestore = getFirestore();
+  if (!firestore || !txn || !txn.id) {
+    return false;
+  }
+
+  await firestore.collection(TRANSACTIONS_COLLECTION).doc(String(txn.id)).set(toFirestoreTransaction(txn), { merge: true });
+  return true;
+}
+
+async function syncAllUserTransactionsToFirestore(userId, txnLimit = 1000) {
+  const firestore = getFirestore();
+  if (!firestore || !userId) {
+    return false;
+  }
+
+  const transactions = db.prepare(
+    'SELECT * FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT ?'
+  ).all(asInt(userId), txnLimit);
+
+  for (const txn of transactions) {
+    try {
+      await syncTransactionToFirestore(txn);
+    } catch (err) {
+      console.error(`[firestore-sync] Failed to sync transaction ${txn.id} for user ${userId}:`, err.message);
+    }
+  }
+  return true;
+}
+
 async function syncUserBundleToFirestore(userId) {
   const firestore = getFirestore();
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
@@ -271,6 +411,9 @@ async function syncUserBundleToFirestore(userId) {
   }
 
   const accounts = db.prepare('SELECT * FROM accounts WHERE user_id = ?').all(userId);
+  const recentTransactions = db.prepare(
+    'SELECT * FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 200'
+  ).all(userId);
 
   const batch = firestore.batch();
   const userDocRef = firestore.collection(USERS_COLLECTION).doc(String(user.id));
@@ -281,6 +424,13 @@ async function syncUserBundleToFirestore(userId) {
     const accountRef = firestore.collection(ACCOUNTS_COLLECTION).doc(String(account.id));
     accountDocRefs.push(accountRef);
     batch.set(accountRef, toFirestoreAccount(account), { merge: true });
+  }
+
+  const txnDocRefs = [];
+  for (const txn of recentTransactions) {
+    const txnRef = firestore.collection(TRANSACTIONS_COLLECTION).doc(String(txn.id));
+    txnDocRefs.push(txnRef);
+    batch.set(txnRef, toFirestoreTransaction(txn), { merge: true });
   }
 
   await batch.commit();
@@ -309,7 +459,8 @@ async function syncUserBundleToFirestore(userId) {
 
   console.log(
     `[firestore-sync] Synced user ${user.id} (${user.email}) ` +
-    `+ ${accounts.length} account(s) to Firestore project "${getResolvedProjectId()}" ` +
+    `+ ${accounts.length} account(s) + ${recentTransactions.length} txn(s) ` +
+    `to Firestore project "${getResolvedProjectId()}" ` +
     `-> collection "${USERS_COLLECTION}"`
   );
 
@@ -362,7 +513,11 @@ async function hydrateUserFromFirestoreByEmail(email) {
 
   const doc = snapshot.docs[0];
   const localUser = upsertLocalUser(doc.data(), doc.id);
-  await hydrateAccountsForUser(localUser ? localUser.id : doc.id);
+  const hydrateUserId = localUser ? localUser.id : doc.id;
+  await Promise.all([
+    hydrateAccountsForUser(hydrateUserId),
+    hydrateTransactionsForUser(hydrateUserId)
+  ]);
   return localUser;
 }
 
@@ -393,7 +548,11 @@ async function hydrateUserFromFirestoreById(userId) {
   }
 
   const localUser = upsertLocalUser(doc.data(), doc.id);
-  await hydrateAccountsForUser(localUser ? localUser.id : normalizedUserId);
+  const hydrateUserId = localUser ? localUser.id : normalizedUserId;
+  await Promise.all([
+    hydrateAccountsForUser(hydrateUserId),
+    hydrateTransactionsForUser(hydrateUserId)
+  ]);
   return localUser;
 }
 
@@ -423,6 +582,32 @@ async function hydrateAccountsForUser(userId) {
   return accounts.filter(Boolean);
 }
 
+async function hydrateTransactionsForUser(userId, limit = 500) {
+  const firestore = getFirestore();
+  const normalizedUserId = asInt(userId);
+  if (!firestore || !normalizedUserId) {
+    return [];
+  }
+
+  const snapshots = await Promise.all([
+    firestore.collection(TRANSACTIONS_COLLECTION).where('user_id', '==', normalizedUserId).orderBy('created_at_ts', 'desc').limit(limit).get(),
+    firestore.collection(TRANSACTIONS_COLLECTION).where('user_ref', '==', String(normalizedUserId)).orderBy('created_at_ts', 'desc').limit(limit).get()
+  ]);
+
+  const seen = new Set();
+  const txns = [];
+  for (const snapshot of snapshots) {
+    snapshot.docs.forEach((doc) => {
+      if (!seen.has(doc.id)) {
+        seen.add(doc.id);
+        txns.push(upsertLocalTransaction(doc.data(), doc.id));
+      }
+    });
+  }
+
+  return txns.filter(Boolean);
+}
+
 async function hydrateRecentCustomersFromFirestore(limit = 200) {
   const firestore = getFirestore();
   if (!firestore) {
@@ -440,7 +625,10 @@ async function hydrateRecentCustomersFromFirestore(limit = 200) {
     const localUser = upsertLocalUser(doc.data(), doc.id);
     if (localUser) {
       users.push(localUser);
-      await hydrateAccountsForUser(localUser.id);
+      await Promise.all([
+        hydrateAccountsForUser(localUser.id),
+        hydrateTransactionsForUser(localUser.id, 100)
+      ]);
     }
   }
 
@@ -530,10 +718,14 @@ module.exports = {
   isFirestoreEnabled,
   syncUserToFirestore,
   syncAccountToFirestore,
+  syncTransactionToFirestore,
+  syncAllUserTransactionsToFirestore,
   syncUserBundleToFirestore,
   syncConfiguredAdminToFirestore,
   hydrateUserFromFirestoreByEmail,
   hydrateUserFromFirestoreById,
+  hydrateAccountsForUser,
+  hydrateTransactionsForUser,
   hydrateRecentCustomersFromFirestore,
   firestoreUserExistsByEmail,
   getFirestoreDashboardCustomerStats,

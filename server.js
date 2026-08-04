@@ -11,6 +11,8 @@ const moment = require('moment');
 const { db } = require('./database');
 const {
   hydrateUserFromFirestoreById,
+  hydrateAccountsForUser,
+  hydrateTransactionsForUser,
   isFirestoreEnabled,
   syncConfiguredAdminToFirestore,
   backfillLocalUsersToFirestore
@@ -34,6 +36,18 @@ const firebaseWebConfig = {
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.set('trust proxy', 1);
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+  }
+  next();
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -203,6 +217,16 @@ app.use(async (req, res, next) => {
       }
     }
     if (user) {
+      if (isFirestoreEnabled()) {
+        try {
+          await Promise.all([
+            hydrateAccountsForUser(user.id),
+            hydrateTransactionsForUser(user.id, 300)
+          ]);
+        } catch (hydrateErr) {
+          console.error(`Failed to hydrate accounts/transactions for user ${user.id}:`, hydrateErr);
+        }
+      }
       const isAdmin = Number(user.is_admin) === 1 ? 1 : 0;
 
       req.user = user;

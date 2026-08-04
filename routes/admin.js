@@ -12,7 +12,9 @@ const {
   hydrateRecentCustomersFromFirestore,
   hydrateUserFromFirestoreById,
   isFirestoreEnabled,
-  syncUserBundleToFirestore
+  syncUserBundleToFirestore,
+  syncAccountToFirestore,
+  syncTransactionToFirestore
 } = require('../services/firestore-sync');
 
 const router = express.Router();
@@ -122,6 +124,37 @@ function getTransactionImpact(txn) {
   return { balance: 0, available: 0 };
 }
 
+async function syncAccountAndTxnToFirestore(accountId, txnId) {
+  if (!isFirestoreEnabled()) return true;
+  try {
+    const promises = [];
+    if (accountId) {
+      const acc = db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId);
+      if (acc) promises.push(syncAccountToFirestore(acc));
+    }
+    if (txnId) {
+      const txn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
+      if (txn) promises.push(syncTransactionToFirestore(txn));
+    }
+    await Promise.all(promises);
+    return true;
+  } catch (err) {
+    console.error('syncAccountAndTxnToFirestore failed:', err);
+    return false;
+  }
+}
+
+async function syncUserBundle(userId) {
+  if (!isFirestoreEnabled()) return true;
+  try {
+    await syncUserBundleToFirestore(userId);
+    return true;
+  } catch (err) {
+    console.error(`syncUserBundle failed for user ${userId}:`, err);
+    return false;
+  }
+}
+
 function applyAccountImpact(accountId, impact, multiplier = 1) {
   if (!accountId || (!impact.balance && !impact.available)) {
     return;
@@ -221,6 +254,14 @@ function buildTransactionPayload(body) {
 }
 
 async function getStats() {
+  if (isFirestoreEnabled()) {
+    try {
+      await hydrateRecentCustomersFromFirestore(200);
+    } catch (err) {
+      console.error('Failed to pre-hydrate customers for stats:', err);
+    }
+  }
+
   const todayTransactions = db.prepare(`
     SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as volume
     FROM transactions
@@ -319,11 +360,11 @@ async function getStats() {
 
     return {
       ...baseStats,
-      totalUsers: firestoreStats.totalCustomers,
-      totalCustomers: firestoreStats.totalCustomers,
-      newThisWeek: firestoreStats.newThisWeek,
-      unverifiedCustomers: firestoreStats.unverifiedCustomers,
-      recentUsers: firestoreStats.recentUsers.length ? firestoreStats.recentUsers : baseStats.recentUsers
+      totalUsers: Math.max(baseStats.totalUsers, firestoreStats.totalCustomers),
+      totalCustomers: Math.max(baseStats.totalCustomers, firestoreStats.totalCustomers),
+      newThisWeek: Math.max(baseStats.newThisWeek, firestoreStats.newThisWeek),
+      unverifiedCustomers: Math.max(baseStats.unverifiedCustomers, firestoreStats.unverifiedCustomers),
+      recentUsers: firestoreStats.recentUsers.length > baseStats.recentUsers.length ? firestoreStats.recentUsers : baseStats.recentUsers
     };
   } catch (error) {
     console.error('Failed to load customer stats from Firestore:', error);
@@ -641,16 +682,42 @@ router.post('/users/:id/accounts/create', requireAdmin, async (req, res) => {
   }
 
   const accNum = generateAcc();
+  const initBalance = parseFloat(initial_balance) || 0;
 
-  db.prepare(`
+  const accountId = db.prepare(`
     INSERT INTO accounts (user_id, account_number, account_type, account_name, balance, available_balance, status, branch, bsb)
     VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
-  `).run(userId, accNum, account_type || 'Everyday Savings', `${user.first_name} ${user.last_name}`, initial_balance || 0, initial_balance || 0, branch || 'Sydney CBD', bsb || '082-987');
+  `).run(userId, accNum, account_type || 'Everyday Savings', `${user.first_name} ${user.last_name}`, initBalance, initBalance, branch || 'Sydney CBD', bsb || '082-987').lastInsertRowid;
 
-  addAuditLog(req.session.userId, 'CREATE_ACCOUNT', 'account', null, `Created ${account_type} account for user ${userId}`, req.ip);
-  addNotification(userId, 'New Account Opened', `Your ${account_type} account has been opened.`, 'success');
+  let txnId = null;
+  if (initBalance > 0) {
+    const txnInfo = db.prepare(`
+      INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, status, approved_by, approved_at)
+      VALUES (?, ?, 'deposit', ?, 'AUD', ?, 'completed', ?, CURRENT_TIMESTAMP)
+    `).run(accountId, userId, initBalance, `Initial Deposit - Account Opening`, req.session.userId);
+    txnId = txnInfo.lastInsertRowid;
+  }
 
-  req.session.success = 'Account created successfully.';
+  if (isFirestoreEnabled()) {
+    try {
+      const newAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId);
+      await syncAccountToFirestore(newAccount);
+      if (txnId) {
+        const initTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
+        await syncTransactionToFirestore(initTxn);
+      }
+    } catch (error) {
+      console.error('Failed to sync admin-created account to Firestore:', error);
+      req.session.error = 'Account created locally, but Firestore sync failed.';
+    }
+  }
+
+  addAuditLog(req.session.userId, 'CREATE_ACCOUNT', 'account', accountId, `Created ${account_type} account for user ${userId} with balance $${initBalance}`, req.ip);
+  addNotification(userId, 'New Account Opened', `Your ${account_type || 'Everyday Savings'} account has been opened${initBalance > 0 ? ` with an initial balance of $${initBalance.toLocaleString()}` : ''}.`, 'success');
+
+  if (!req.session.error) {
+    req.session.success = 'Account created successfully.';
+  }
   res.redirect(`/admin/users/${userId}`);
 });
 
@@ -658,7 +725,7 @@ router.post('/users/:id/account', requireAdmin, (req, res) => {
   res.redirect(307, `/admin/users/${req.params.id}/accounts/create`);
 });
 
-router.post('/users/:id/adjust-balance', requireAdmin, (req, res) => {
+router.post('/users/:id/adjust-balance', requireAdmin, async (req, res) => {
   const userId = req.params.id;
   const { account_id, adjustment_type, amount, reason } = req.body;
   const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(account_id, userId);
@@ -677,17 +744,40 @@ router.post('/users/:id/adjust-balance', requireAdmin, (req, res) => {
     newAvailable = parseFloat(account.available_balance) - amt;
   }
 
-  db.prepare('UPDATE accounts SET balance = ?, available_balance = ? WHERE id = ?').run(newBalance, newAvailable, account_id);
+  const txnAmount = adjustment_type === 'credit' ? amt : -amt;
+  const txnDescription = `Admin Adjustment: ${reason || adjustment_type} by Admin #${req.session.userId}`;
 
-  db.prepare(`
-    INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, status)
-    VALUES (?, ?, 'admin_adjustment', ?, 'AUD', ?, 'completed')
-  `).run(account_id, userId, adjustment_type === 'credit' ? amt : -amt, `Admin Adjustment: ${reason || adjustment_type} by Admin #${req.session.userId}`);
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE accounts SET balance = ?, available_balance = ? WHERE id = ?').run(newBalance, newAvailable, account_id);
+    const info = db.prepare(`
+      INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, status, approved_by, approved_at)
+      VALUES (?, ?, 'admin_adjustment', ?, 'AUD', ?, 'completed', ?, CURRENT_TIMESTAMP)
+    `).run(account_id, userId, txnAmount, txnDescription, req.session.userId);
+    return info.lastInsertRowid;
+  });
+
+  const transactionId = tx();
+
+  if (isFirestoreEnabled()) {
+    try {
+      const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(account_id);
+      const newTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(transactionId);
+      await Promise.all([
+        syncAccountToFirestore(updatedAccount),
+        syncTransactionToFirestore(newTxn)
+      ]);
+    } catch (error) {
+      console.error('Failed to sync balance adjustment to Firestore:', error);
+      req.session.error = 'Balance adjusted locally, but Firestore sync failed.';
+    }
+  }
 
   addAuditLog(req.session.userId, 'BALANCE_ADJUSTMENT', 'account', account_id, `${adjustment_type === 'credit' ? 'Credited' : 'Debited'} $${amt} to account ${account.account_number}: ${reason}`, req.ip);
   addNotification(userId, 'Account Adjustment', `Your account has been ${adjustment_type === 'credit' ? 'credited' : 'debited'} $${amt.toLocaleString()}.`, adjustment_type === 'credit' ? 'success' : 'warning');
 
-  req.session.success = `Balance adjusted: $${amt.toLocaleString()} ${adjustment_type === 'credit' ? 'credited' : 'debited'}.`;
+  if (!req.session.error) {
+    req.session.success = `Balance adjusted: $${amt.toLocaleString()} ${adjustment_type === 'credit' ? 'credited' : 'debited'}.`;
+  }
   res.redirect(`/admin/users/${userId}`);
 });
 
@@ -757,7 +847,7 @@ router.get('/approvals', requireAdmin, (req, res) => {
   });
 });
 
-router.post('/kyc/:id/approve', requireAdmin, (req, res) => {
+router.post('/kyc/:id/approve', requireAdmin, async (req, res) => {
   const kycId = req.params.id;
   const kyc = db.prepare('SELECT * FROM kyc WHERE id = ? AND status = ?').get(kycId, 'pending');
   if (!kyc) {
@@ -770,6 +860,8 @@ router.post('/kyc/:id/approve', requireAdmin, (req, res) => {
   });
   tx();
 
+  await syncUserBundle(kyc.user_id);
+
   addAuditLog(req.session.userId, 'APPROVE_KYC', 'kyc', kycId, `Approved KYC #${kycId} for user ${kyc.user_id}`, req.ip);
   addNotification(kyc.user_id, 'KYC Approved', 'Your identity verification has been approved! You now have full access to all features.', 'success');
 
@@ -781,15 +873,23 @@ router.post('/approvals/kyc/:id', requireAdmin, (req, res) => {
   res.redirect(307, `/admin/kyc/${req.params.id}/approve`);
 });
 
-router.post('/kyc/:id/reject', requireAdmin, (req, res) => {
+router.post('/kyc/:id/reject', requireAdmin, async (req, res) => {
   const { reason } = req.body;
-  const kyc = db.prepare('SELECT * FROM kyc WHERE id = ? AND status = ?').get(req.params.id, 'pending');
+  const kycId = req.params.id;
+  const kyc = db.prepare('SELECT * FROM kyc WHERE id = ? AND status = ?').get(kycId, 'pending');
   if (!kyc) {
     return res.redirect('/admin/approvals?section=kyc');
   }
 
-  db.prepare('UPDATE kyc SET status = ?, rejection_reason = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?').run('rejected', reason || '', req.session.userId, req.params.id);
-  addAuditLog(req.session.userId, 'REJECT_KYC', 'kyc', req.params.id, `Rejected KYC #${req.params.id}: ${reason}`, req.ip);
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE kyc SET status = ?, rejection_reason = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?').run('rejected', reason || '', req.session.userId, kycId);
+    db.prepare('UPDATE users SET is_verified = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(kyc.user_id);
+  });
+  tx();
+
+  await syncUserBundle(kyc.user_id);
+
+  addAuditLog(req.session.userId, 'REJECT_KYC', 'kyc', kycId, `Rejected KYC #${kycId}: ${reason}`, req.ip);
   addNotification(kyc.user_id, 'KYC Rejected', `Your KYC was rejected: ${reason || 'Please resubmit valid documents.'}`, 'warning');
 
   req.session.success = 'KYC rejected.';
@@ -800,7 +900,7 @@ router.post('/approvals/kyc/:id/reject', requireAdmin, (req, res) => {
   res.redirect(307, `/admin/kyc/${req.params.id}/reject`);
 });
 
-router.post('/transactions/:id/approve', requireAdmin, (req, res) => {
+router.post('/transactions/:id/approve', requireAdmin, async (req, res) => {
   const txnId = req.params.id;
   const txn = db.prepare('SELECT * FROM transactions WHERE id = ? AND status = ?').get(txnId, 'pending');
   if (!txn) {
@@ -821,6 +921,7 @@ router.post('/transactions/:id/approve', requireAdmin, (req, res) => {
         .run('rejected', restrictionMessage, req.session.userId, txnId);
     });
     rejectTx();
+    await syncAccountAndTxnToFirestore(txn.account_id, txnId);
     addAuditLog(req.session.userId, 'REJECT_TRANSACTION', 'transaction', txnId, `Rejected txn #${txnId}: ${restrictionMessage}`, req.ip);
     addNotification(txn.user_id, 'Transaction Rejected', restrictionMessage, 'warning');
     req.session.error = restrictionMessage;
@@ -837,6 +938,8 @@ router.post('/transactions/:id/approve', requireAdmin, (req, res) => {
   });
   tx();
 
+  await syncAccountAndTxnToFirestore(txn.account_id, txnId);
+
   addAuditLog(req.session.userId, 'APPROVE_TRANSACTION', 'transaction', txnId, `Approved ${txn.transaction_type} of $${txn.amount}`, req.ip);
   addNotification(txn.user_id, 'Transaction Approved', `Your ${txn.transaction_type} of $${parseFloat(txn.amount).toLocaleString()} has been approved.`, 'success');
 
@@ -852,9 +955,10 @@ router.post('/approvals/transfers/:id', requireAdmin, (req, res) => {
   res.redirect(307, `/admin/transactions/${req.params.id}/approve`);
 });
 
-router.post('/transactions/:id/reject', requireAdmin, (req, res) => {
+router.post('/transactions/:id/reject', requireAdmin, async (req, res) => {
   const { reason } = req.body;
-  const txn = db.prepare('SELECT * FROM transactions WHERE id = ? AND status = ?').get(req.params.id, 'pending');
+  const txnId = req.params.id;
+  const txn = db.prepare('SELECT * FROM transactions WHERE id = ? AND status = ?').get(txnId, 'pending');
   if (!txn) {
     return res.redirect('/admin/approvals?section=transfers');
   }
@@ -867,8 +971,9 @@ router.post('/transactions/:id/reject', requireAdmin, (req, res) => {
     db.prepare('UPDATE accounts SET available_balance = available_balance + ? WHERE id = ?').run(refund, txn.account_id);
   }
 
-  db.prepare('UPDATE transactions SET status = ?, rejection_reason = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?').run('rejected', reason || '', req.session.userId, req.params.id);
-  addAuditLog(req.session.userId, 'REJECT_TRANSACTION', 'transaction', req.params.id, `Rejected txn #${req.params.id}: ${reason}`, req.ip);
+  db.prepare('UPDATE transactions SET status = ?, rejection_reason = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?').run('rejected', reason || '', req.session.userId, txnId);
+  await syncAccountAndTxnToFirestore(txn.account_id, txnId);
+  addAuditLog(req.session.userId, 'REJECT_TRANSACTION', 'transaction', txnId, `Rejected txn #${txnId}: ${reason}`, req.ip);
   addNotification(txn.user_id, 'Transaction Rejected', `Your transaction was rejected: ${reason || 'Unable to process.'}`, 'warning');
 
   req.session.success = 'Transaction rejected.';
@@ -914,25 +1019,32 @@ router.post('/approvals/cards/:id/reject', requireAdmin, (req, res) => {
   res.redirect(307, `/admin/cards/${req.params.id}/reject`);
 });
 
-router.post('/loans/:id/approve', requireAdmin, (req, res) => {
-  const loan = db.prepare('SELECT * FROM loans WHERE id = ? AND status = ?').get(req.params.id, 'pending');
+router.post('/loans/:id/approve', requireAdmin, async (req, res) => {
+  const loanId = req.params.id;
+  const loan = db.prepare('SELECT * FROM loans WHERE id = ? AND status = ?').get(loanId, 'pending');
   if (!loan) return res.redirect('/admin/approvals?section=loans');
 
   const account = db.prepare('SELECT * FROM accounts WHERE user_id = ? ORDER BY id LIMIT 1').get(loan.user_id);
+  let newTxnId = null;
   const tx = db.transaction(() => {
     db.prepare('UPDATE loans SET status = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP, disbursed_at = CURRENT_TIMESTAMP, remaining_balance = ?, next_payment_date = DATE(CURRENT_TIMESTAMP, \'+1 month\'), account_id = ? WHERE id = ?')
-      .run('disbursed', req.session.userId, loan.loan_amount, account ? account.id : null, req.params.id);
+      .run('disbursed', req.session.userId, loan.loan_amount, account ? account.id : null, loanId);
     if (account) {
       db.prepare('UPDATE accounts SET balance = balance + ?, available_balance = available_balance + ? WHERE id = ?').run(loan.loan_amount, loan.loan_amount, account.id);
-      db.prepare(`
-        INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, status)
-        VALUES (?, ?, 'loan_disbursement', ?, 'AUD', ?, 'completed')
-      `).run(account.id, loan.user_id, loan.loan_amount, `${loan.loan_type} Disbursement - Loan #${loan.id}`);
+      const info = db.prepare(`
+        INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, status, approved_by, approved_at)
+        VALUES (?, ?, 'loan_disbursement', ?, 'AUD', ?, 'completed', ?, CURRENT_TIMESTAMP)
+      `).run(account.id, loan.user_id, loan.loan_amount, `${loan.loan_type} Disbursement - Loan #${loanId}`, req.session.userId);
+      newTxnId = info.lastInsertRowid;
     }
   });
   tx();
 
-  addAuditLog(req.session.userId, 'APPROVE_LOAN', 'loan', req.params.id, `Approved ${loan.loan_type} of $${loan.loan_amount} for user ${loan.user_id}`, req.ip);
+  if (account) {
+    await syncAccountAndTxnToFirestore(account.id, newTxnId);
+  }
+
+  addAuditLog(req.session.userId, 'APPROVE_LOAN', 'loan', loanId, `Approved ${loan.loan_type} of $${loan.loan_amount} for user ${loan.user_id}`, req.ip);
   addNotification(loan.user_id, 'Loan Approved', `Your ${loan.loan_type} of $${parseFloat(loan.loan_amount).toLocaleString()} has been approved and disbursed!`, 'success');
 
   req.session.success = 'Loan approved and disbursed successfully.';
@@ -960,32 +1072,37 @@ router.post('/approvals/loans/:id/reject', requireAdmin, (req, res) => {
   res.redirect(307, `/admin/loans/${req.params.id}/reject`);
 });
 
-router.post('/bills/:id/approve', requireAdmin, (req, res) => {
-  const bill = db.prepare('SELECT * FROM bill_payments WHERE id = ? AND status = ?').get(req.params.id, 'pending');
+router.post('/bills/:id/approve', requireAdmin, async (req, res) => {
+  const billId = req.params.id;
+  const bill = db.prepare('SELECT * FROM bill_payments WHERE id = ? AND status = ?').get(billId, 'pending');
   if (!bill) return res.redirect('/admin/approvals?section=bills');
 
   const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(bill.account_id);
   const restrictionMessage = getAccountRestrictionMessage(account, 'approve pending bill payments');
   if (restrictionMessage) {
     db.prepare('UPDATE bill_payments SET status = ?, rejection_reason = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .run('rejected', restrictionMessage, req.session.userId, req.params.id);
-    addAuditLog(req.session.userId, 'REJECT_BILLPAY', 'bill_payment', req.params.id, `Rejected bill payment #${req.params.id}: ${restrictionMessage}`, req.ip);
+      .run('rejected', restrictionMessage, req.session.userId, billId);
+    addAuditLog(req.session.userId, 'REJECT_BILLPAY', 'bill_payment', billId, `Rejected bill payment #${billId}: ${restrictionMessage}`, req.ip);
     addNotification(bill.user_id, 'Bill Payment Rejected', restrictionMessage, 'warning');
     req.session.error = restrictionMessage;
     return res.redirect('/admin/approvals?section=bills');
   }
 
+  let newTxnId = null;
   const tx = db.transaction(() => {
     db.prepare('UPDATE accounts SET balance = balance - ?, available_balance = available_balance - ? WHERE id = ?').run(bill.amount, bill.amount, bill.account_id);
-    db.prepare('UPDATE bill_payments SET status = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?').run('completed', req.session.userId, req.params.id);
-    db.prepare(`
-      INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, reference, status)
-      VALUES (?, ?, 'bill_payment', ?, 'AUD', ?, ?, 'completed')
-    `).run(bill.account_id, bill.user_id, bill.amount, `Bill Payment: ${bill.biller_name}`, bill.reference_number);
+    db.prepare('UPDATE bill_payments SET status = ?, approved_by = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?').run('completed', req.session.userId, billId);
+    const info = db.prepare(`
+      INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, reference, status, approved_by, approved_at)
+      VALUES (?, ?, 'bill_payment', ?, 'AUD', ?, ?, 'completed', ?, CURRENT_TIMESTAMP)
+    `).run(bill.account_id, bill.user_id, bill.amount, `Bill Payment: ${bill.biller_name}`, bill.reference_number, req.session.userId);
+    newTxnId = info.lastInsertRowid;
   });
   tx();
 
-  addAuditLog(req.session.userId, 'APPROVE_BILLPAY', 'bill_payment', req.params.id, `Approved bill payment of $${bill.amount} to ${bill.biller_name}`, req.ip);
+  await syncAccountAndTxnToFirestore(bill.account_id, newTxnId);
+
+  addAuditLog(req.session.userId, 'APPROVE_BILLPAY', 'bill_payment', billId, `Approved bill payment of $${bill.amount} to ${bill.biller_name}`, req.ip);
   addNotification(bill.user_id, 'Bill Payment Approved', `Your $${parseFloat(bill.amount).toLocaleString()} payment to ${bill.biller_name} has been approved.`, 'success');
 
   req.session.success = 'Bill payment approved successfully.';
@@ -1268,7 +1385,7 @@ router.get('/transactions/new', requireAdmin, (req, res) => {
   });
 });
 
-router.post('/transactions/create', requireAdmin, (req, res) => {
+router.post('/transactions/create', requireAdmin, async (req, res) => {
   const payload = buildTransactionPayload(req.body);
   const account = db.prepare(`
     SELECT a.*, u.first_name, u.last_name
@@ -1319,10 +1436,27 @@ router.post('/transactions/create', requireAdmin, (req, res) => {
   });
 
   const transactionId = tx();
+
+  if (isFirestoreEnabled()) {
+    try {
+      const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(payload.account_id);
+      const newTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(transactionId);
+      await Promise.all([
+        syncAccountToFirestore(updatedAccount),
+        syncTransactionToFirestore(newTxn)
+      ]);
+    } catch (error) {
+      console.error('Failed to sync admin-created transaction to Firestore:', error);
+      req.session.error = 'Transaction created locally, but Firestore sync failed.';
+    }
+  }
+
   addAuditLog(req.session.userId, 'CREATE_TRANSACTION', 'transaction', transactionId, `Created ${payload.transaction_type} on account ${account.account_number}`, req.ip);
   addNotification(account.user_id, 'Account Transaction Added', `An administrator added a ${payload.transaction_type.replace(/_/g, ' ')} transaction to your account.`, payload.status === 'completed' ? 'info' : 'warning');
 
-  req.session.success = 'Transaction created successfully.';
+  if (!req.session.error) {
+    req.session.success = 'Transaction created successfully.';
+  }
   res.redirect(`/admin/transactions/${transactionId}`);
 });
 

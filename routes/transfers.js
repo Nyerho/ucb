@@ -8,6 +8,11 @@ const {
   getAccountStatusMessage,
   addNotification
 } = require('../middleware/auth');
+const {
+  isFirestoreEnabled,
+  syncAccountToFirestore,
+  syncTransactionToFirestore
+} = require('../services/firestore-sync');
 
 const router = express.Router();
 
@@ -104,11 +109,10 @@ router.post('/local', requireAuth, requireVerified, async (req, res) => {
   const needsApproval = parseFloat(amount) >= 5000;
   const status = needsApproval ? 'pending' : 'completed';
 
-  const insert = db.prepare(`
+  const insertInfo = db.prepare(`
     INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, reference, recipient_name, recipient_account, recipient_bsb, recipient_bank, status, fee)
     VALUES (?, ?, 'local_transfer', ?, 'AUD', ?, ?, ?, ?, ?, 'Australia', ?, ?)
-  `);
-  insert.run(
+  `).run(
     from_account,
     req.session.userId,
     amount,
@@ -120,6 +124,7 @@ router.post('/local', requireAuth, requireVerified, async (req, res) => {
     status,
     fee
   );
+  const txnId = insertInfo.lastInsertRowid;
 
   if (status === 'completed') {
     const newBalance = parseFloat(sourceAccount.balance) - parseFloat(amount) - fee;
@@ -133,6 +138,19 @@ router.post('/local', requireAuth, requireVerified, async (req, res) => {
     db.prepare('UPDATE accounts SET available_balance = ? WHERE id = ?').run(newAvailable, from_account);
 
     addNotification(req.session.userId, 'Transfer Pending', `Transfer of $${parseFloat(amount).toLocaleString()} is awaiting approval`, 'warning');
+  }
+
+  if (isFirestoreEnabled()) {
+    try {
+      const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(from_account);
+      const newTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
+      await Promise.all([
+        syncAccountToFirestore(updatedAccount),
+        syncTransactionToFirestore(newTxn)
+      ]);
+    } catch (err) {
+      console.error('Failed to sync local transfer to Firestore:', err);
+    }
   }
 
   if (save_beneficiary && beneficiary_name) {
@@ -238,11 +256,10 @@ router.post('/international', requireAuth, requireVerified, async (req, res) => 
   const newAvailable = parseFloat(sourceAccount.available_balance) - holdAmount;
   db.prepare('UPDATE accounts SET available_balance = ? WHERE id = ?').run(newAvailable, from_account);
 
-  const insert = db.prepare(`
+  const insertInfo = db.prepare(`
     INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, reference, recipient_name, recipient_account, swift_code, iban, country, status, fee, exchange_rate, converted_amount)
     VALUES (?, ?, 'international_transfer', ?, 'AUD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  insert.run(
+  `).run(
     from_account,
     req.session.userId,
     amount,
@@ -258,6 +275,20 @@ router.post('/international', requireAuth, requireVerified, async (req, res) => 
     resolvedRate,
     convertedAmount
   );
+  const txnId = insertInfo.lastInsertRowid;
+
+  if (isFirestoreEnabled()) {
+    try {
+      const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(from_account);
+      const newTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
+      await Promise.all([
+        syncAccountToFirestore(updatedAccount),
+        syncTransactionToFirestore(newTxn)
+      ]);
+    } catch (err) {
+      console.error('Failed to sync international transfer to Firestore:', err);
+    }
+  }
 
   if (save_beneficiary && beneficiary_name) {
     db.prepare(`

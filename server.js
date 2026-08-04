@@ -164,14 +164,19 @@ if (isServerless) {
   } else {
     console.log(`  Firestore ready for project "${diag.projectIdResolved}"`);
     console.log('============================================================\n');
-    syncConfiguredAdminToFirestore().catch((error) => {
-      console.error('Failed to sync configured admin to Firestore:', error);
-    });
-    const shouldBackfill = process.env.FIRESTORE_SKIP_STARTUP_BACKFILL !== 'true';
-    if (shouldBackfill) {
-      backfillLocalUsersToFirestore(500).catch((error) => {
-        console.error('Firestore startup backfill failed:', error);
+    const allowServerlessStartupSync = process.env.FIRESTORE_RUN_STARTUP_SYNC_ON_SERVERLESS === 'true';
+    if (!isServerless || allowServerlessStartupSync) {
+      syncConfiguredAdminToFirestore().catch((error) => {
+        console.error('Failed to sync configured admin to Firestore:', error);
       });
+      const shouldBackfill = process.env.FIRESTORE_SKIP_STARTUP_BACKFILL !== 'true';
+      if (shouldBackfill) {
+        backfillLocalUsersToFirestore(500).catch((error) => {
+          console.error('Firestore startup backfill failed:', error);
+        });
+      }
+    } else {
+      console.log('[startup] Skipping Firestore startup sync/backfill on serverless to avoid cold-start crashes.');
     }
   }
 })();

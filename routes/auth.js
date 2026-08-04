@@ -387,7 +387,7 @@ router.post('/forgot-password', async (req, res) => {
       VALUES (?, ?, ?)
     `).run(user.id, tokenHash, expiresAt);
 
-    const resetUrl = `${getAppBaseUrl()}/auth/reset-password?token=${rawToken}`;
+    const resetUrl = `${getAppBaseUrl(req)}/auth/reset-password?token=${rawToken}`;
     try {
       await sendPasswordResetEmail(user, resetUrl);
     } catch (error) {

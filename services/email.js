@@ -56,7 +56,21 @@ function formatCurrency(amount, currency = 'AUD') {
   }).format(Number(amount || 0));
 }
 
-function getAppBaseUrl() {
+function getAppBaseUrl(req) {
+  const forwardedProto = req && typeof req.get === 'function'
+    ? String(req.get('x-forwarded-proto') || '').split(',')[0].trim().toLowerCase()
+    : '';
+  const host = req && typeof req.get === 'function'
+    ? String(req.get('x-forwarded-host') || req.get('host') || '').split(',')[0].trim()
+    : '';
+  const protocol = req && host
+    ? ((req.secure || forwardedProto === 'https') ? 'https' : 'http')
+    : '';
+
+  if (host && protocol) {
+    return `${protocol}://${host}`.replace(/\/+$/, '');
+  }
+
   const explicit = process.env.APP_BASE_URL || process.env.PUBLIC_BASE_URL || process.env.SITE_URL;
   if (explicit) {
     return String(explicit).replace(/\/+$/, '');

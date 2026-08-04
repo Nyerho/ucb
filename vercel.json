@@ -2,8 +2,7 @@
   "version": 2,
   "functions": {
     "api/index.js": {
-      "runtime": "@vercel/node@3",
-      "includeFiles": "views/**,routes/**,services/**,lib/**,database.js,public/**"
+      "includeFiles": "views/**,routes/**,services/**,lib/**,database.js,server.js,public/**"
     }
   },
   "rewrites": [

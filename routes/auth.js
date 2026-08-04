@@ -1,8 +1,10 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { body, validationResult } = require('express-validator');
 const { db, generateAccountNumber } = require('../database');
 const { requireAuth } = require('../middleware/auth');
+const { getFirebaseAuth } = require('../lib/firebase-admin');
 const {
   syncUserBundleToFirestore,
   hydrateUserFromFirestoreByEmail,
@@ -11,6 +13,74 @@ const {
 } = require('../services/firestore-sync');
 
 const router = express.Router();
+
+function isFirebaseUserNotFound(error) {
+  const code = String(error && error.code ? error.code : '');
+  return code === 'auth/user-not-found' || code.endsWith('/user-not-found');
+}
+
+function buildFirebaseAuthPayload(user, plainPassword) {
+  const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim();
+  const payload = {
+    email: (user.email || '').trim().toLowerCase(),
+    displayName: fullName || undefined,
+    emailVerified: Number(user.is_verified) === 1,
+    disabled: Number(user.is_frozen) === 1
+  };
+
+  if (plainPassword) {
+    payload.password = plainPassword;
+  }
+
+  return payload;
+}
+
+async function syncLocalUserToFirebaseAuth(user, plainPassword) {
+  const firebaseAuth = getFirebaseAuth();
+  if (!firebaseAuth || !user || !user.email) {
+    return { synced: false, skipped: true };
+  }
+
+  const desiredUid = `ucb-${user.id}`;
+  const authPayload = buildFirebaseAuthPayload(user, plainPassword);
+  let authRecord = null;
+
+  try {
+    authRecord = await firebaseAuth.getUser(desiredUid);
+  } catch (error) {
+    if (!isFirebaseUserNotFound(error)) {
+      throw error;
+    }
+  }
+
+  if (!authRecord) {
+    try {
+      authRecord = await firebaseAuth.getUserByEmail(authPayload.email);
+    } catch (error) {
+      if (!isFirebaseUserNotFound(error)) {
+        throw error;
+      }
+    }
+  }
+
+  if (authRecord) {
+    authRecord = await firebaseAuth.updateUser(authRecord.uid, authPayload);
+  } else {
+    authRecord = await firebaseAuth.createUser({
+      uid: desiredUid,
+      ...authPayload,
+      password: authPayload.password || crypto.randomBytes(24).toString('hex')
+    });
+  }
+
+  await firebaseAuth.setCustomUserClaims(authRecord.uid, {
+    local_user_id: Number(user.id),
+    role: user.role || (Number(user.is_admin) === 1 ? 'super_admin' : 'customer'),
+    is_admin: Number(user.is_admin) === 1
+  });
+
+  return { synced: true, uid: authRecord.uid };
+}
 
 router.get('/register', (req, res) => {
   if (req.session.userId) {
@@ -221,6 +291,15 @@ router.post('/register', [
   req.session.success = firestoreSyncSkipped
     ? 'Account created locally! Note: Remote sync is currently unavailable. Your account will be synced when the service is restored. Please login to continue.'
     : 'Account created successfully! Please login to continue.';
+
+  try {
+    const createdUser = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
+    await syncLocalUserToFirebaseAuth(createdUser, password);
+    console.log(`${requestTag} step=firebase_auth_sync status=ok`);
+  } catch (error) {
+    console.error(`${requestTag} step=firebase_auth_sync status=FAILED error=${String(error.message || error)}`);
+  }
+
   console.log(`${requestTag} registration_complete final_status=${firestoreSyncAttempted ? 'synced_firestore' : 'local_only'}`);
   res.redirect('/auth/login');
 });
@@ -280,6 +359,10 @@ router.post('/login', async (req, res) => {
       console.error('Failed to sync login update to Firestore:', error);
     });
   }
+
+  syncLocalUserToFirebaseAuth(user, password).catch((error) => {
+    console.error(`Failed to sync Firebase Authentication user for ${normalizedEmail}:`, error);
+  });
 
   req.session.userId = user.id;
   const isAdmin = Number(user.is_admin) === 1 ? 1 : 0;

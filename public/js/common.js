@@ -37,24 +37,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const appSidebar = document.getElementById('appSidebar');
     if (appSidebar) {
+      const resetMobileSidebarState = () => {
+        if (window.innerWidth >= 992) return;
+        appSidebar.classList.remove('show', 'showing');
+        document.body.classList.remove('offcanvas-open', 'overflow-hidden');
+        document.querySelectorAll('.offcanvas-backdrop').forEach(el => el.remove());
+      };
+
       const closeSidebarIfMobile = () => {
         try {
           if (window.innerWidth >= 992) return;
           if (window.bootstrap?.Offcanvas) {
-            const inst = bootstrap.Offcanvas.getInstance(appSidebar);
+            const inst = bootstrap.Offcanvas.getOrCreateInstance(appSidebar);
             if (inst && appSidebar.classList.contains('show')) {
               inst.hide();
             }
           } else {
-            const backdrop = document.querySelector('.offcanvas-backdrop');
-            if (backdrop) backdrop.remove();
-            document.body.classList.remove('offcanvas-open', 'overflow-hidden');
-            appSidebar.classList.remove('show');
+            resetMobileSidebarState();
           }
         } catch (e) {
           console.warn('sidebar close fallback failed:', e);
         }
       };
+
+      resetMobileSidebarState();
+      window.addEventListener('pageshow', resetMobileSidebarState);
+      window.addEventListener('resize', resetMobileSidebarState);
 
       appSidebar.querySelectorAll('a.sidebar-link, .sidebar-brand a').forEach(link => {
         link.addEventListener('click', _ev => {

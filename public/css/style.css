@@ -2757,12 +2757,20 @@ a:hover {
     bottom: 0;
     width: min(300px, 86vw);
     max-width: min(300px, 86vw);
+    visibility: hidden;
+    transform: translateX(calc(-100% - 12px));
+    pointer-events: none;
+    box-shadow: none;
   }
   .sidebar.offcanvas-lg.show,
   .sidebar.offcanvas-lg.showing,
   .sidebar.offcanvas-lg.hiding {
     display: flex;
     flex-direction: column;
+    visibility: visible;
+    transform: none;
+    pointer-events: auto;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
   }
   .sidebar.offcanvas-lg .sidebar-menu,
   .sidebar.offcanvas-lg .sidebar-footer {

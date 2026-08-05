@@ -1,5 +1,6 @@
 const express = require('express');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const multer = require('multer');
 const { db } = require('../database');
@@ -19,11 +20,18 @@ const DOCUMENT_TYPES = [
   { type: 'Citizenship', name: 'Citizenship Certificate', requires_both: false }
 ];
 
-const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'kyc');
-fs.mkdirSync(uploadDir, { recursive: true });
+const isServerlessRuntime = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const uploadDir = isServerlessRuntime
+  ? path.join(os.tmpdir(), 'unitedcreditbank', 'uploads', 'kyc')
+  : path.join(process.cwd(), 'public', 'uploads', 'kyc');
+
+function ensureUploadDir() {
+  fs.mkdirSync(uploadDir, { recursive: true });
+  return uploadDir;
+}
 
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
+  destination: (_req, _file, cb) => cb(null, ensureUploadDir()),
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
     const safeBase = path.basename(file.originalname || 'document', ext)

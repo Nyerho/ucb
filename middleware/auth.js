@@ -11,9 +11,14 @@ function requireAuth(req, res, next) {
 }
 
 function requireVerified(req, res, next) {
-  if (req.session.user && req.session.user.is_frozen === 1) {
+  const sessionUser = req.user || req.session.user || null;
+  if (sessionUser && Number(sessionUser.is_frozen) === 1) {
     req.session.error = 'Your account has been frozen. Please contact support.';
     return res.redirect('/auth/login');
+  }
+  if (!sessionUser || Number(sessionUser.is_verified) !== 1) {
+    req.session.error = 'Complete and approve your KYC verification before using this feature.';
+    return res.redirect('/kyc');
   }
   next();
 }

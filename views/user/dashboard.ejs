@@ -40,39 +40,39 @@
             </div>
             <div class="stat-icon stat-icon-primary">💰</div>
           </div>
-          <div class="stat-change up">↑ Across <%= accounts.length %> accounts</div>
+          <div class="stat-change up">Available now: <%= currency(totalAvailable) %> across <%= accounts.length %> accounts</div>
         </div>
           <div class="stat-card">
           <div class="stat-header">
             <div>
-              <div class="stat-label">Credit Available</div>
-              <div class="stat-value"><%= currency(totalCredit || 0) %></div>
+              <div class="stat-label">Total Credits</div>
+              <div class="stat-value" style="color:var(--success);">+<%= currency(totalCredits || 0) %></div>
             </div>
             <div class="stat-icon stat-icon-success">💳</div>
           </div>
-          <div class="stat-change"><%= cards.length %> active card<%= cards.length !== 1 ? 's' : '' %></div>
+          <div class="stat-change"><%= cards.length %> active card<%= cards.length !== 1 ? 's' : '' %> • Limit <%= currency(totalCardCredit || 0) %></div>
+        </div>
+          <div class="stat-card">
+          <div class="stat-header">
+            <div>
+              <div class="stat-label">Total Debits</div>
+              <div class="stat-value" style="color:var(--danger);">-<%= currency(totalDebits || 0) %></div>
+            </div>
+            <div class="stat-icon stat-icon-warning">⬆️</div>
+          </div>
+          <div class="stat-change">Completed outgoing payments and fees</div>
         </div>
           <div class="stat-card">
           <div class="stat-header">
             <div>
               <div class="stat-label">Pending Approvals</div>
-              <div class="stat-value" style="color:var(--warning);"><%= pendingTransfers + pendingLoans %></div>
+              <div class="stat-value" style="color:var(--warning);"><%= pendingTransfers + pendingLoans + pendingCards %></div>
             </div>
-            <div class="stat-icon stat-icon-warning">⏳</div>
-          </div>
-          <div class="stat-change">Transfers & Loans pending</div>
-        </div>
-          <div class="stat-card">
-          <div class="stat-header">
-            <div>
-              <div class="stat-label">Active Loans</div>
-              <div class="stat-value"><%= loans.length %></div>
-            </div>
-            <div class="stat-icon stat-icon-info">📑</div>
+            <div class="stat-icon stat-icon-info">⏳</div>
           </div>
           <div class="stat-change">
             <% const loanTotal = loans.filter(l => l.status === 'disbursed' || l.status === 'active').reduce((s,l) => s + parseFloat(l.remaining_balance || l.loan_amount), 0); %>
-            <%= loanTotal > 0 ? currency(loanTotal) + ' balance' : 'No active balance' %>
+            <%= loanTotal > 0 ? currency(loanTotal) + ' active loan balance' : 'No active loan balance' %>
           </div>
         </div>
         </div>

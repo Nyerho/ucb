@@ -1,4 +1,7 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 const { db } = require('../database');
 const {
   requireAuth,
@@ -15,6 +18,28 @@ const DOCUMENT_TYPES = [
   { type: 'Birth Certificate', name: 'Australian Birth Certificate', requires_both: false },
   { type: 'Citizenship', name: 'Citizenship Certificate', requires_both: false }
 ];
+
+const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'kyc');
+fs.mkdirSync(uploadDir, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
+    const safeBase = path.basename(file.originalname || 'document', ext)
+      .replace(/[^a-z0-9_-]+/gi, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'document';
+    cb(null, `${Date.now()}-${safeBase}${ext}`);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024
+  }
+});
 
 router.get('/', requireAuth, (req, res) => {
   const kycRecords = db.prepare(`
@@ -46,8 +71,13 @@ router.get('/submit', requireAuth, (req, res) => {
   });
 });
 
-router.post('/submit', requireAuth, (req, res) => {
+router.post('/submit', requireAuth, upload.fields([
+  { name: 'document_front', maxCount: 1 },
+  { name: 'document_back', maxCount: 1 },
+  { name: 'document_selfie', maxCount: 1 }
+]), (req, res) => {
   const { document_type, document_number, id_expiry, document_front, document_back, document_selfie } = req.body;
+  const selectedType = DOCUMENT_TYPES.find((doc) => doc.type === document_type);
 
   const existingPending = db.prepare('SELECT * FROM kyc WHERE user_id = ? AND status = ?').get(req.session.userId, 'pending');
   if (existingPending) {
@@ -61,16 +91,41 @@ router.post('/submit', requireAuth, (req, res) => {
     return res.redirect('/kyc');
   }
 
+  if (!selectedType) {
+    req.session.error = 'Please choose a valid document type.';
+    return res.redirect('/kyc/submit');
+  }
+
+  if (!String(document_number || '').trim()) {
+    req.session.error = 'Document number is required.';
+    return res.redirect('/kyc/submit');
+  }
+
+  const files = req.files || {};
+  const frontFile = files.document_front && files.document_front[0];
+  const backFile = files.document_back && files.document_back[0];
+  const selfieFile = files.document_selfie && files.document_selfie[0];
+
+  if (!frontFile) {
+    req.session.error = 'Please upload the front of your document.';
+    return res.redirect('/kyc/submit');
+  }
+
+  if (selectedType.requires_both && !backFile) {
+    req.session.error = 'Please upload the back of your document.';
+    return res.redirect('/kyc/submit');
+  }
+
   db.prepare(`
     INSERT INTO kyc (user_id, document_type, document_number, document_front, document_back, document_selfie, id_expiry, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
   `).run(
     req.session.userId,
     document_type,
-    document_number,
-    document_front || 'uploads/kyc/default_front.jpg',
-    document_back || 'uploads/kyc/default_back.jpg',
-    document_selfie || 'uploads/kyc/default_selfie.jpg',
+    String(document_number || '').trim(),
+    frontFile ? `uploads/kyc/${frontFile.filename}` : 'uploads/kyc/default_front.jpg',
+    backFile ? `uploads/kyc/${backFile.filename}` : '',
+    selfieFile ? `uploads/kyc/${selfieFile.filename}` : '',
     id_expiry || null
   );
 

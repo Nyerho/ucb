@@ -16,18 +16,65 @@ function hasTransferPin(user) {
   return Boolean(user && user.transfer_pin_hash);
 }
 
-router.get('/dashboard', requireAuth, requireVerified, (req, res) => {
+function isIncomingTransaction(tx) {
+  if (!tx || tx.status !== 'completed') {
+    return false;
+  }
+  if (tx.transaction_type === 'admin_adjustment') {
+    return parseFloat(tx.amount) > 0;
+  }
+  return ['deposit', 'loan_disbursement'].includes(tx.transaction_type);
+}
+
+function isOutgoingTransaction(tx) {
+  if (!tx || tx.status !== 'completed') {
+    return false;
+  }
+  if (tx.transaction_type === 'admin_adjustment') {
+    return parseFloat(tx.amount) < 0;
+  }
+  return ['withdrawal', 'local_transfer', 'international_transfer', 'bill_payment', 'loan_payment'].includes(tx.transaction_type);
+}
+
+function getCreditTotal(transactions) {
+  return transactions.reduce((sum, tx) => {
+    if (!isIncomingTransaction(tx)) {
+      return sum;
+    }
+    return sum + Math.abs(parseFloat(tx.amount) || 0);
+  }, 0);
+}
+
+function getDebitTotal(transactions) {
+  return transactions.reduce((sum, tx) => {
+    if (!isOutgoingTransaction(tx)) {
+      return sum;
+    }
+    return sum + Math.abs(parseFloat(tx.amount) || 0) + Math.abs(parseFloat(tx.fee) || 0);
+  }, 0);
+}
+
+router.get('/dashboard', requireAuth, (req, res) => {
   const userId = req.session.userId;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   const accounts = getUserAccounts(userId);
-  const transactions = getRecentTransactions(userId, 10);
+  const transactions = getRecentTransactions(userId, 25);
   const notifications = getNotifications(userId, 5);
   const kyc = db.prepare('SELECT * FROM kyc WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(userId);
   const cards = db.prepare('SELECT * FROM cards WHERE user_id = ?').all(userId);
   const loans = db.prepare('SELECT * FROM loans WHERE user_id = ?').all(userId);
+  const completedTransactions = db.prepare(`
+    SELECT *
+    FROM transactions
+    WHERE user_id = ? AND status = 'completed'
+    ORDER BY created_at DESC
+  `).all(userId);
 
   const totalBalance = accounts.reduce((sum, acc) => sum + (parseFloat(acc.balance) || 0), 0);
-  const totalCredit = cards.reduce((sum, card) => sum + (parseFloat(card.credit_limit) || 0), 0);
+  const totalAvailable = accounts.reduce((sum, acc) => sum + (parseFloat(acc.available_balance) || 0), 0);
+  const totalCardCredit = cards.reduce((sum, card) => sum + (parseFloat(card.credit_limit) || 0), 0);
+  const totalCredits = getCreditTotal(completedTransactions);
+  const totalDebits = getDebitTotal(completedTransactions);
   const pendingTransfers = db.prepare('SELECT COUNT(*) as count FROM transactions WHERE user_id = ? AND status = ?').get(userId, 'pending').count;
   const pendingCards = db.prepare('SELECT COUNT(*) as count FROM cards WHERE user_id = ? AND status = ?').get(userId, 'pending').count;
   const pendingLoans = db.prepare('SELECT COUNT(*) as count FROM loans WHERE user_id = ? AND status = ?').get(userId, 'pending').count;
@@ -43,7 +90,10 @@ router.get('/dashboard', requireAuth, requireVerified, (req, res) => {
     cards,
     loans,
     totalBalance,
-    totalCredit,
+    totalAvailable,
+    totalCardCredit,
+    totalCredits,
+    totalDebits,
     pendingTransfers,
     pendingCards,
     pendingLoans
@@ -168,13 +218,17 @@ router.get('/statements', requireAuth, (req, res) => {
   const selectedAccount = req.query.account ? accounts.find(a => a.id == req.query.account) : accounts[0];
   
   let transactions = [];
+  let statementCredits = 0;
+  let statementDebits = 0;
   if (selectedAccount) {
     transactions = db.prepare(`
       SELECT * FROM transactions
       WHERE account_id = ?
       ORDER BY created_at DESC
-      LIMIT 100
+      LIMIT 500
     `).all(selectedAccount.id);
+    statementCredits = getCreditTotal(transactions);
+    statementDebits = getDebitTotal(transactions);
   }
 
   res.render('user/statements', {
@@ -182,7 +236,9 @@ router.get('/statements', requireAuth, (req, res) => {
     page: 'statements',
     accounts,
     selectedAccount,
-    transactions
+    transactions,
+    statementCredits,
+    statementDebits
   });
 });
 

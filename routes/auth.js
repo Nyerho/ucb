@@ -7,6 +7,7 @@ const { requireAuth } = require('../middleware/auth');
 const { syncLocalUserToFirebaseAuth } = require('../lib/firebase-admin');
 const {
   getAppBaseUrl,
+  sendAccountWelcomeEmail,
   sendLoginWelcomeEmail,
   sendPasswordResetEmail,
   sendPasswordChangedEmail
@@ -253,6 +254,9 @@ router.post('/register', [
 
   try {
     const createdUser = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
+    sendAccountWelcomeEmail(createdUser).catch((error) => {
+      console.error(`Failed to send welcome email for ${normalizedEmail}:`, error);
+    });
     await syncLocalUserToFirebaseAuth(createdUser, password);
     console.log(`${requestTag} step=firebase_auth_sync status=ok`);
   } catch (error) {

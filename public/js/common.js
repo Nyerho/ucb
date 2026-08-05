@@ -16,61 +16,6 @@ function ensureJivoWidgetLoaded() {
   document.body.appendChild(script);
 }
 
-function openJivoWidget() {
-  if (window.jivo_api && typeof window.jivo_api.open === 'function') {
-    window.jivo_api.open();
-    return true;
-  }
-  return false;
-}
-
-function initJivoChatLauncher() {
-  if (!document.body || document.getElementById('jivoChatLauncher')) {
-    return;
-  }
-
-  ensureJivoWidgetLoaded();
-
-  const launcher = document.createElement('button');
-  launcher.type = 'button';
-  launcher.id = 'jivoChatLauncher';
-  launcher.className = 'jivo-chat-launcher';
-  launcher.setAttribute('aria-label', 'Open live chat');
-  launcher.innerHTML = `
-    <span class="jivo-chat-launcher__icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24" focusable="false">
-        <path d="M12 3C6.477 3 2 7.03 2 12c0 2.054.765 3.947 2.047 5.467L3 21l4.01-1.61A10.43 10.43 0 0 0 12 21c5.523 0 10-4.03 10-9s-4.477-9-10-9Zm-4 8.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm4 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm4 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/>
-      </svg>
-    </span>
-    <span class="jivo-chat-launcher__label">Live Chat</span>
-  `;
-
-  launcher.addEventListener('click', () => {
-    ensureJivoWidgetLoaded();
-    if (openJivoWidget()) {
-      return;
-    }
-
-    launcher.classList.add('is-loading');
-    const startedAt = Date.now();
-    const timer = window.setInterval(() => {
-      if (openJivoWidget()) {
-        launcher.classList.remove('is-loading');
-        window.clearInterval(timer);
-        return;
-      }
-
-      if (Date.now() - startedAt >= 5000) {
-        launcher.classList.remove('is-loading');
-        window.clearInterval(timer);
-        window.location.href = '/contact';
-      }
-    }, 250);
-  });
-
-  document.body.appendChild(launcher);
-}
-
 document.addEventListener('DOMContentLoaded', () => {
   try {
     const errorToast = document.getElementById('toast-error');
@@ -144,7 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    initJivoChatLauncher();
+    ensureJivoWidgetLoaded();
   } catch (initErr) {
     console.error('[common.js DOMContentLoaded] INIT ERROR:', initErr);
   }

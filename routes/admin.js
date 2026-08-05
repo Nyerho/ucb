@@ -15,6 +15,7 @@ const {
 const {
   getFirestoreDashboardCustomerStats,
   hydrateRecentCustomersFromFirestore,
+  hydrateTransactionsForUser,
   hydrateUserFromFirestoreById,
   isFirestoreEnabled,
   syncUserBundleToFirestore,
@@ -89,6 +90,26 @@ async function findAdminCustomerById(userId) {
   }
 
   return user || null;
+}
+
+async function hydrateAdminTransactionDirectory(limit = 500) {
+  if (!isFirestoreEnabled()) {
+    return;
+  }
+
+  try {
+    await hydrateRecentCustomersFromFirestore(Math.min(limit, 200));
+    const users = db.prepare(`
+      SELECT id
+      FROM users
+      WHERE COALESCE(is_admin, 0) = 0
+      ORDER BY id DESC
+      LIMIT ?
+    `).all(Math.min(limit, 200));
+    await Promise.all(users.map((row) => hydrateTransactionsForUser(row.id, limit)));
+  } catch (error) {
+    console.error('Failed to hydrate admin transaction directory from Firestore:', error);
+  }
 }
 
 function getTransactionImpact(txn) {
@@ -956,7 +977,7 @@ router.post('/transactions/:id/approve', requireAdmin, async (req, res) => {
 
   const tx = db.transaction(() => {
     if (isOutgoing) {
-      db.prepare('UPDATE accounts SET balance = balance - ? WHERE id = ?').run(parseFloat(txn.amount) + parseFloat(txn.fee), txn.account_id);
+      db.prepare('UPDATE accounts SET balance = available_balance WHERE id = ?').run(txn.account_id);
     } else {
       db.prepare('UPDATE accounts SET balance = balance + ?, available_balance = available_balance + ? WHERE id = ?').run(txn.amount, txn.amount, txn.account_id);
     }
@@ -1495,7 +1516,8 @@ router.post('/transactions/create', requireAdmin, async (req, res) => {
   res.redirect(`/admin/transactions/${transactionId}`);
 });
 
-router.get('/transactions', requireAdmin, (req, res) => {
+router.get('/transactions', requireAdmin, async (req, res) => {
+  await hydrateAdminTransactionDirectory();
   const { type, status, from_date, to_date, min_amount, max_amount, search, user: userId, account: accountId } = req.query;
   let query = `
     SELECT t.*, u.first_name, u.last_name, u.email, a.account_name, a.account_number

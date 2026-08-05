@@ -57,13 +57,13 @@
         <div>
           <div style="font-size:0.75rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Total Credits</div>
           <div style="font-weight:700;font-size:1.25rem;color:var(--success);margin-top:4px;">
-            +<%= currency(transactions.filter(t => ['deposit','loan_disbursement'].includes(t.transaction_type) && t.status==='completed').reduce((s,t)=>s+Math.abs(parseFloat(t.amount)),0)) %>
+            +<%= currency(statementCredits || 0) %>
           </div>
         </div>
         <div>
           <div style="font-size:0.75rem;color:var(--text-light);text-transform:uppercase;letter-spacing:0.05em;">Total Debits</div>
           <div style="font-weight:700;font-size:1.25rem;color:var(--danger);margin-top:4px;">
-            -<%= currency(transactions.filter(t => ['withdrawal','local_transfer','international_transfer','bill_payment','loan_payment'].includes(t.transaction_type) && t.status==='completed').reduce((s,t)=>s+Math.abs(parseFloat(t.amount)),0)) %>
+            -<%= currency(statementDebits || 0) %>
           </div>
         </div>
       </div>

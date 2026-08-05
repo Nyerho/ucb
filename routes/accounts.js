@@ -24,15 +24,23 @@ router.get('/:id', requireAuth, (req, res) => {
     SELECT * FROM transactions
     WHERE account_id = ?
     ORDER BY created_at DESC
-    LIMIT 50
+    LIMIT 500
   `).all(account.id);
 
   const totalDeposits = transactions
-    .filter(t => t.transaction_type === 'deposit' && t.status === 'completed')
-    .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+    .filter((t) => {
+      if (t.status !== 'completed') return false;
+      if (t.transaction_type === 'admin_adjustment') return parseFloat(t.amount) > 0;
+      return ['deposit', 'loan_disbursement'].includes(t.transaction_type);
+    })
+    .reduce((sum, t) => sum + Math.abs(parseFloat(t.amount) || 0), 0);
   const totalWithdrawals = transactions
-    .filter(t => t.transaction_type === 'withdrawal' && t.status === 'completed')
-    .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+    .filter((t) => {
+      if (t.status !== 'completed') return false;
+      if (t.transaction_type === 'admin_adjustment') return parseFloat(t.amount) < 0;
+      return ['withdrawal', 'local_transfer', 'international_transfer', 'bill_payment', 'loan_payment'].includes(t.transaction_type);
+    })
+    .reduce((sum, t) => sum + Math.abs(parseFloat(t.amount) || 0) + Math.abs(parseFloat(t.fee) || 0), 0);
 
   res.render('accounts/detail', {
     title: `${account.account_name} - United Credit Bank`,

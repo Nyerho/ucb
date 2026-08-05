@@ -10,19 +10,35 @@ function getEmailConfig() {
   const host = process.env.BREVO_SMTP_HOST || process.env.SMTP_HOST || 'smtp-relay.brevo.com';
   const port = Number(process.env.BREVO_SMTP_PORT || process.env.SMTP_PORT || 587);
   const user = process.env.BREVO_SMTP_LOGIN || process.env.BREVO_SMTP_USER || process.env.SMTP_USER || process.env.BREVO_LOGIN || '';
-  const pass = process.env.BREVO_SMTP_PASSWORD || process.env.BREVO_API_KEY || process.env.SMTP_PASS || process.env.BREVO_KEY || '';
+  const pass = process.env.BREVO_SMTP_PASSWORD || process.env.SMTP_PASS || process.env.BREVO_SMTP_KEY || '';
   const from = process.env.EMAIL_FROM || process.env.BREVO_FROM_EMAIL || process.env.SMTP_FROM || 'United Credit Bank <no-reply@unitedcreditbank.xyz>';
   const replyTo = process.env.EMAIL_REPLY_TO || process.env.BREVO_REPLY_TO || process.env.SMTP_REPLY_TO || undefined;
   return { host, port, user, pass, from, replyTo };
 }
 
+function getBrevoApiKey() {
+  return process.env.BREVO_API_KEY || process.env.BREVO_KEY || '';
+}
+
+function getEmailMode() {
+  const apiKey = getBrevoApiKey();
+  if (apiKey) {
+    return 'brevo_api';
+  }
+  const cfg = getEmailConfig();
+  if (cfg.user && cfg.pass) {
+    return 'smtp';
+  }
+  return 'none';
+}
+
 function isEmailConfigured() {
   const cfg = getEmailConfig();
-  return Boolean(cfg.user && cfg.pass && cfg.from);
+  return Boolean(cfg.from && getEmailMode() !== 'none');
 }
 
 function getTransporter() {
-  if (!isEmailConfigured()) {
+  if (getEmailMode() !== 'smtp' || !isEmailConfigured()) {
     return null;
   }
   if (!cachedTransporter) {
@@ -85,9 +101,79 @@ function getAppBaseUrl(req) {
   return 'http://localhost:3000';
 }
 
+function parseAddress(value) {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^\s*(.*?)\s*<\s*([^>]+)\s*>\s*$/);
+  if (match) {
+    const name = match[1] ? match[1].trim() : '';
+    const email = match[2] ? match[2].trim() : '';
+    return { name, email };
+  }
+  return { name: '', email: raw };
+}
+
+async function sendEmailViaBrevoApi({ to, subject, html, text }) {
+  const apiKey = getBrevoApiKey();
+  if (!apiKey) {
+    return { sent: false, skipped: true };
+  }
+
+  const cfg = getEmailConfig();
+  const sender = parseAddress(cfg.from);
+  const replyTo = cfg.replyTo ? parseAddress(cfg.replyTo) : null;
+  const recipients = String(to)
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean)
+    .map(email => ({ email }));
+
+  if (!recipients.length) {
+    return { sent: false, skipped: true };
+  }
+
+  const payload = {
+    sender: sender.name ? { name: sender.name, email: sender.email } : { email: sender.email },
+    to: recipients,
+    subject: subject || '',
+    htmlContent: html || undefined,
+    textContent: text || undefined
+  };
+
+  if (replyTo && replyTo.email) {
+    payload.replyTo = replyTo.name ? { name: replyTo.name, email: replyTo.email } : { email: replyTo.email };
+  }
+
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'api-key': apiKey
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    const msg = `Brevo API email send failed (${response.status}): ${errText || response.statusText}`;
+    throw new Error(msg);
+  }
+
+  return { sent: true };
+}
+
 async function sendEmail({ to, subject, html, text }) {
+  const mode = getEmailMode();
+  if (mode === 'none' || !to) {
+    return { sent: false, skipped: true };
+  }
+
+  if (mode === 'brevo_api') {
+    return await sendEmailViaBrevoApi({ to, subject, html, text });
+  }
+
   const transporter = getTransporter();
-  if (!transporter || !to) {
+  if (!transporter) {
     return { sent: false, skipped: true };
   }
 
@@ -150,6 +236,34 @@ function getTransactionStatusLine(txn) {
   if (status === 'rejected') return 'rejected';
   if (status === 'cancelled') return 'cancelled';
   return status;
+}
+
+async function sendAccountWelcomeEmail(user) {
+  if (!user || !user.email) {
+    return { sent: false, skipped: true };
+  }
+
+  const title = 'Welcome to United Credit Bank';
+  const body = `
+    <p style="margin:0 0 16px;font-size:15px;">Hello ${escapeHtml(user.first_name || 'there')},</p>
+    <p style="margin:0 0 16px;font-size:15px;line-height:1.7;">
+      Your online banking profile has been created successfully.
+    </p>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px;">
+      <div style="font-size:14px;margin-bottom:6px;"><strong>Email:</strong> ${escapeHtml(user.email)}</div>
+      <div style="font-size:14px;"><strong>Created:</strong> ${escapeHtml(new Date().toISOString())}</div>
+    </div>
+    <p style="margin:16px 0 0;font-size:14px;color:#475569;line-height:1.7;">
+      If you did not create this account, please contact support immediately.
+    </p>
+  `;
+
+  return sendEmail({
+    to: user.email,
+    subject: 'Welcome to United Credit Bank',
+    html: buildEmailFrame(title, body),
+    text: `Welcome ${user.first_name || ''}. Your United Credit Bank online banking profile has been created successfully.`
+  });
 }
 
 async function sendLoginWelcomeEmail(user, meta = {}) {
@@ -292,6 +406,7 @@ module.exports = {
   getAppBaseUrl,
   isEmailConfigured,
   sendEmail,
+  sendAccountWelcomeEmail,
   sendLoginWelcomeEmail,
   sendPasswordResetEmail,
   sendPasswordChangedEmail,

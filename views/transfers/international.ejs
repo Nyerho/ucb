@@ -42,7 +42,7 @@
             <label class="form-label">Destination Country *</label>
             <select name="country" required class="form-select">
               <% countries.forEach(c => { %>
-                <option value="<%= c %>"><%= c %></option>
+                <option value="<%= c.name %>"><%= c.name %></option>
               <% }) %>
             </select>
           </div>
@@ -188,5 +188,4 @@ setTimeout(updateIntlSummary, 100);
 </script>
 
 <%- include('../partials/layouts/user-end', { pageScripts }) -%>
-
 

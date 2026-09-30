@@ -558,6 +558,89 @@ router.get('/users/:id', requireAdmin, async (req, res) => {
   });
 });
 
+router.post('/users/:id/kyc/manual-approve', requireAdmin, async (req, res) => {
+  const userId = req.params.id;
+  const user = await findAdminCustomerById(userId);
+  if (!user) {
+    req.session.error = 'User not found.';
+    return res.redirect('/admin/users');
+  }
+
+  if (Number(user.is_admin) === 1) {
+    req.session.error = 'Administrator accounts do not require customer KYC verification.';
+    return res.redirect(`/admin/users/${userId}`);
+  }
+
+  const verification = db.transaction(() => {
+    const currentUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    if (!currentUser) {
+      return null;
+    }
+
+    if (Number(currentUser.is_verified) === 1) {
+      return { alreadyVerified: true, kycId: null };
+    }
+
+    const pendingKyc = db.prepare(`
+      SELECT id FROM kyc
+      WHERE user_id = ? AND status = 'pending'
+      ORDER BY submitted_at DESC, id DESC
+      LIMIT 1
+    `).get(userId);
+
+    let kycId;
+    if (pendingKyc) {
+      kycId = pendingKyc.id;
+      db.prepare(`
+        UPDATE kyc
+        SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP,
+            rejection_reason = NULL
+        WHERE id = ?
+      `).run(req.session.userId, pendingKyc.id);
+    } else {
+      const result = db.prepare(`
+        INSERT INTO kyc (
+          user_id, document_type, document_number, document_front, document_back,
+          document_selfie, id_expiry, status, reviewed_by, reviewed_at
+        ) VALUES (?, 'Admin Manual Verification', 'Verified via administrator records', '', '', '', NULL, 'approved', ?, CURRENT_TIMESTAMP)
+      `).run(userId, req.session.userId);
+      kycId = result.lastInsertRowid;
+    }
+
+    db.prepare('UPDATE users SET is_verified = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(userId);
+    return { alreadyVerified: false, kycId };
+  })();
+
+  if (!verification) {
+    req.session.error = 'User not found.';
+    return res.redirect('/admin/users');
+  }
+
+  if (verification.alreadyVerified) {
+    req.session.success = 'This user is already KYC verified.';
+    return res.redirect(`/admin/users/${userId}`);
+  }
+
+  await syncUserBundle(userId);
+  addAuditLog(
+    req.session.userId,
+    'MANUAL_APPROVE_KYC',
+    'kyc',
+    verification.kycId,
+    `Manually verified KYC for user ${userId} from administrator-provided records`,
+    req.ip
+  );
+  addNotification(
+    userId,
+    'KYC Approved',
+    'Your identity has been verified by an administrator using records provided directly to our team.',
+    'success'
+  );
+
+  req.session.success = 'KYC manually approved successfully.';
+  res.redirect(`/admin/users/${userId}`);
+});
+
 router.post('/users/:id/update', requireAdmin, async (req, res) => {
   const { first_name, last_name, email, phone, address, city, state, postcode, country, date_of_birth, is_verified, is_frozen } = req.body;
   const userId = req.params.id;

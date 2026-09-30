@@ -29,6 +29,11 @@
         <button class="btn btn-primary" onclick="document.getElementById('editUserModal').classList.add('active')">✏️ Edit</button>
         <% if (!customer.is_admin) { %>
           <a href="/admin/users/<%= customer.id %>/freeze" class="btn btn-warning"><%= customer.is_frozen ? '🔥 Unfreeze' : '❄️ Freeze' %></a>
+          <% if (!customer.is_verified) { %>
+            <form method="POST" action="/admin/users/<%= customer.id %>/kyc/manual-approve" style="display:inline;" onsubmit="return confirm('Manually approve KYC for this user using records provided to the administrator?');">
+              <button class="btn btn-success">✅ Approve KYC Manually</button>
+            </form>
+          <% } %>
         <% } %>
         <button class="btn btn-outline" onclick="document.getElementById('pwModal').classList.add('active')">🔐 Reset PW</button>
         <a href="/admin/transactions/new?user_id=<%= customer.id %>" class="btn btn-light">➕ Add Transaction</a>
@@ -184,6 +189,20 @@
 
 <div class="tab-content" id="tab-kyc" style="display:none;">
   <div class="card"><div class="card-header"><h3 class="card-title">🆔 KYC Records</h3></div>
+    <% if (!customer.is_admin && !customer.is_verified) { %>
+      <div class="card-body" style="border-bottom:1px solid var(--border);">
+        <div class="alert alert-warning" style="margin:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+          <span class="alert-icon">🗂️</span>
+          <div class="alert-content" style="flex:1;min-width:240px;">
+            <div class="alert-title">Manual verification available</div>
+            <p class="alert-message" style="margin:0;">If the user supplied identity records directly to the administrator, you can approve KYC here without a customer upload.</p>
+          </div>
+          <form method="POST" action="/admin/users/<%= customer.id %>/kyc/manual-approve" onsubmit="return confirm('Manually approve KYC for this user using records provided to the administrator?');">
+            <button class="btn btn-success">✅ Approve KYC Manually</button>
+          </form>
+        </div>
+      </div>
+    <% } %>
     <div class="table-wrap"><table class="table"><thead><tr><th>Type</th><th>Number</th><th>Expiry</th><th>Submitted</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody><% (kyc||[]).forEach(k => { %>
       <tr><td><strong><%= k.document_type %></strong></td>
@@ -391,5 +410,4 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 </script>
 
 <%- include('../partials/layouts/admin-end') -%>
-
 

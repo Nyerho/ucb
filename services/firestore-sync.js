@@ -1,5 +1,12 @@
 const { db } = require('../database');
-const { getFirestore, hasAdminCredentials, logFirestoreDiagnostics, getResolvedProjectId } = require('../lib/firebase-admin');
+const {
+  getFirestore,
+  hasAdminCredentials,
+  isFirebaseAuthEnabled,
+  listFirebaseAuthUsers,
+  logFirestoreDiagnostics,
+  getResolvedProjectId
+} = require('../lib/firebase-admin');
 
 const USERS_COLLECTION = process.env.FIRESTORE_USERS_COLLECTION || 'users';
 const ACCOUNTS_COLLECTION = process.env.FIRESTORE_ACCOUNTS_COLLECTION || 'accounts';
@@ -227,6 +234,78 @@ function upsertLocalUser(userDoc, explicitId) {
   `).run(payload);
 
   return db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+}
+
+function authUserIsAdmin(authUser) {
+  const claims = authUser && authUser.customClaims ? authUser.customClaims : {};
+  const role = String(claims.role || '').trim().toLowerCase();
+  return claims.is_admin === true || claims.is_admin === 1 || ['admin', 'super_admin'].includes(role);
+}
+
+function authUserName(authUser) {
+  const displayName = String(authUser.displayName || '').trim();
+  const [firstName = '', ...lastNameParts] = displayName.split(/\s+/);
+  return { first_name: firstName, last_name: lastNameParts.join(' ') };
+}
+
+function upsertLocalUserFromFirebaseAuth(authUser) {
+  const email = String(authUser && authUser.email || '').trim().toLowerCase();
+  if (!email) {
+    return null;
+  }
+
+  const claims = authUser.customClaims || {};
+  const names = authUserName(authUser);
+  const uidMatch = /^ucb-(\d+)$/.exec(String(authUser.uid || ''));
+  const linkedId = asInt(claims.local_user_id) || (uidMatch ? asInt(uidMatch[1]) : 0);
+  const existingByEmail = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  const linkedUser = linkedId ? db.prepare('SELECT * FROM users WHERE id = ?').get(linkedId) : null;
+  const existing = existingByEmail || (linkedUser && linkedUser.email === email ? linkedUser : null);
+  const userDoc = {
+    ...(existing || {}),
+    id: existing ? existing.id : linkedId,
+    first_name: existing && existing.first_name ? existing.first_name : names.first_name,
+    last_name: existing && existing.last_name ? existing.last_name : names.last_name,
+    email,
+    phone: existing ? existing.phone : '',
+    password: existing ? existing.password : '',
+    is_admin: authUserIsAdmin(authUser) ? 1 : (existing ? existing.is_admin : 0),
+    is_verified: existing ? existing.is_verified : (authUser.emailVerified ? 1 : 0),
+    is_frozen: authUser.disabled ? 1 : (existing ? existing.is_frozen : 0),
+    role: existing ? existing.role : (authUserIsAdmin(authUser) ? (claims.role || 'super_admin') : 'customer'),
+    created_at: authUser.metadata && authUser.metadata.creationTime
+      ? authUser.metadata.creationTime : (existing && existing.created_at),
+    updated_at: existing && existing.updated_at,
+    last_login: authUser.metadata && authUser.metadata.lastSignInTime
+      ? authUser.metadata.lastSignInTime : (existing && existing.last_login)
+  };
+
+  if (userDoc.id) {
+    return upsertLocalUser(userDoc, userDoc.id);
+  }
+
+  const now = toSqlDateTime(new Date());
+  const result = db.prepare(`
+    INSERT INTO users (
+      first_name, last_name, email, phone, password, is_admin, is_verified, is_frozen, role, created_at, updated_at, last_login
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(email) DO UPDATE SET
+      first_name = excluded.first_name,
+      last_name = excluded.last_name,
+      is_admin = excluded.is_admin,
+      is_verified = excluded.is_verified,
+      is_frozen = excluded.is_frozen,
+      role = excluded.role,
+      updated_at = excluded.updated_at,
+      last_login = excluded.last_login
+  `).run(
+    userDoc.first_name || '', userDoc.last_name || '', userDoc.email, userDoc.phone || '', userDoc.password || '',
+    userDoc.is_admin, userDoc.is_verified, userDoc.is_frozen, userDoc.role,
+    toSqlDateTime(userDoc.created_at) || now, toSqlDateTime(userDoc.updated_at) || now,
+    toSqlDateTime(userDoc.last_login)
+  );
+
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
 }
 
 function upsertLocalAccount(accountDoc, explicitId) {
@@ -610,27 +689,54 @@ async function hydrateTransactionsForUser(userId, limit = 500) {
 
 async function hydrateRecentCustomersFromFirestore(limit = 200) {
   const firestore = getFirestore();
-  if (!firestore) {
-    return [];
-  }
+  const usersByEmail = new Map();
 
-  const snapshot = await firestore.collection(USERS_COLLECTION)
-    .where('is_admin', '==', 0)
-    .orderBy('created_at_ts', 'desc')
-    .limit(limit)
-    .get();
+  if (firestore) {
+    try {
+      const snapshot = await firestore.collection(USERS_COLLECTION).get();
+      const firestoreUsers = snapshot.docs
+        .map((doc) => ({ doc, data: doc.data() }))
+        .filter(({ data }) => String(data.email || '').trim())
+        .filter(({ data }) => normalizeAdminFlag(data.is_admin) === 0)
+        .sort((left, right) => String(right.data.created_at || '').localeCompare(String(left.data.created_at || '')))
+        .slice(0, limit);
 
-  const users = [];
-  for (const doc of snapshot.docs) {
-    const localUser = upsertLocalUser(doc.data(), doc.id);
-    if (localUser) {
-      users.push(localUser);
-      await Promise.all([
-        hydrateAccountsForUser(localUser.id),
-        hydrateTransactionsForUser(localUser.id, 100)
-      ]);
+      for (const { doc, data } of firestoreUsers) {
+        const localUser = upsertLocalUser(data, doc.id);
+        if (localUser) {
+          usersByEmail.set(localUser.email, localUser);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to hydrate users from Firestore; continuing with Firebase Auth:', error);
     }
   }
+
+  if (isFirebaseAuthEnabled()) {
+    try {
+      const authUsers = await listFirebaseAuthUsers();
+      for (const authUser of authUsers) {
+        if (authUserIsAdmin(authUser)) {
+          continue;
+        }
+        const localUser = upsertLocalUserFromFirebaseAuth(authUser);
+        if (localUser) {
+          usersByEmail.set(localUser.email, localUser);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to hydrate users from Firebase Auth; continuing with local/Firestore users:', error);
+    }
+  }
+
+  const users = Array.from(usersByEmail.values())
+    .sort((left, right) => String(right.created_at || '').localeCompare(String(left.created_at || '')))
+    .slice(0, limit);
+
+  await Promise.all(users.map((localUser) => Promise.all([
+    hydrateAccountsForUser(localUser.id),
+    hydrateTransactionsForUser(localUser.id, 100)
+  ])));
 
   return users;
 }
@@ -716,6 +822,7 @@ async function backfillLocalUsersToFirestore(limit = 500) {
 
 module.exports = {
   isFirestoreEnabled,
+  isFirebaseAuthEnabled,
   syncUserToFirestore,
   syncAccountToFirestore,
   syncTransactionToFirestore,

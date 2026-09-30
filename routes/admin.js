@@ -17,6 +17,7 @@ const {
   hydrateRecentCustomersFromFirestore,
   hydrateTransactionsForUser,
   hydrateUserFromFirestoreById,
+  isFirebaseAuthEnabled,
   isFirestoreEnabled,
   syncUserBundleToFirestore,
   syncAccountToFirestore,
@@ -62,12 +63,12 @@ function buildCustomerScope(extraConditions = '') {
 }
 
 async function hydrateAdminCustomerDirectory() {
-  if (!isFirestoreEnabled()) {
+  if (!isFirestoreEnabled() && !isFirebaseAuthEnabled()) {
     return;
   }
 
   try {
-    await hydrateRecentCustomersFromFirestore(200);
+    await hydrateRecentCustomersFromFirestore(1000);
   } catch (error) {
     console.error('Failed to hydrate admin customer directory from Firestore:', error);
   }
@@ -438,7 +439,7 @@ router.get('/users', requireAdmin, async (req, res) => {
   if (verified === 'verified') query += ' AND COALESCE(u.is_verified, 0) = 1';
   if (verified === 'unverified') query += ' AND COALESCE(u.is_verified, 0) = 0';
 
-  query += ' ORDER BY u.created_at DESC LIMIT 200';
+  query += ' ORDER BY u.created_at DESC LIMIT 1000';
   const users = db.prepare(query).all(...params);
 
   users.forEach(u => {

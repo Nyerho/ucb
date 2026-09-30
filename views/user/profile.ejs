@@ -1,8 +1,15 @@
 <% const pageScripts = ['/js/profile.js']; %>
+<% const safeProfileImage = user.profile_image && /^data:image\/(jpeg|png|gif|webp);base64,/.test(user.profile_image) ? user.profile_image : null; %>
 <%- include('../partials/layouts/user-start') -%>
 
 <div class="profile-header">
-  <div class="avatar-big"><%= user.first_name.charAt(0) + user.last_name.charAt(0) %></div>
+  <div class="avatar-big">
+    <% if (safeProfileImage) { %>
+      <img src="<%= safeProfileImage %>" alt="Profile picture">
+    <% } else { %>
+      <%= user.first_name.charAt(0) + user.last_name.charAt(0) %>
+    <% } %>
+  </div>
   <div class="profile-info">
     <h3><%= user.first_name %> <%= user.last_name %></h3>
     <p style="color:var(--text-gray);margin:0;"><%= user.email %></p>
@@ -17,6 +24,17 @@
       <% } %>
       <span class="tag">📱 <%= user.phone %></span>
     </div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:24px;">
+  <div class="card-header"><h3 class="card-title">📷 Profile Picture</h3></div>
+  <div class="card-body">
+    <form method="POST" action="/user/profile/photo" enctype="multipart/form-data" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+      <input type="file" name="profile_image" accept="image/jpeg,image/png,image/gif,image/webp" class="form-input" style="max-width:420px;" required>
+      <button type="submit" class="btn btn-primary">Upload Picture</button>
+    </form>
+    <p style="margin:10px 0 0;color:var(--text-gray);font-size:0.82rem;">JPG, PNG, GIF, or WEBP up to 512 KB. Your picture is shown across your account.</p>
   </div>
 </div>
 
@@ -148,4 +166,3 @@
 </div>
 
 <%- include('../partials/layouts/user-end', { pageScripts }) -%>
-

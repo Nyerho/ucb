@@ -16,7 +16,13 @@
     </button>
     <div class="dropdown">
       <button class="user-chip" id="userDropBtn" style="background:none;border:none;cursor:pointer;">
-        <div class="user-avatar"><%= typeof user !== 'undefined' ? (user.first_name || 'U').charAt(0) + (user.last_name || '').charAt(0) : 'U' %></div>
+        <div class="user-avatar">
+          <% if (typeof user !== 'undefined' && user.profile_image && /^data:image\/(jpeg|png|gif|webp);base64,/.test(user.profile_image)) { %>
+            <img src="<%= user.profile_image %>" alt="Profile picture">
+          <% } else { %>
+            <%= typeof user !== 'undefined' ? (user.first_name || 'U').charAt(0) + (user.last_name || '').charAt(0) : 'U' %>
+          <% } %>
+        </div>
         <div class="user-chip-info">
           <div class="user-chip-name"><%= typeof user !== 'undefined' ? user.first_name + ' ' + user.last_name : 'User' %></div>
           <div class="user-chip-email">My Account ▾</div>

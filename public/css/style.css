@@ -1464,6 +1464,15 @@ a:hover {
   flex-shrink: 0;
 }
 
+.user-avatar img,
+.avatar-big img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
+}
+
 .user-chip-info {
   display: flex;
   flex-direction: column;

@@ -342,6 +342,7 @@ router.post('/login', async (req, res) => {
     first_name: user.first_name,
     last_name: user.last_name,
     email: user.email,
+    profile_image: user.profile_image || '',
     is_admin: isAdmin,
     is_verified: Number(user.is_verified) === 1 ? 1 : 0,
     is_frozen: Number(user.is_frozen) === 1 ? 1 : 0

@@ -1,7 +1,9 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
 const { body, validationResult } = require('express-validator');
 const { db } = require('../database');
+const { syncUserBundleToFirestore } = require('../services/firestore-sync');
 const {
   requireAuth,
   requireVerified,
@@ -11,6 +13,36 @@ const {
 } = require('../middleware/auth');
 
 const router = express.Router();
+
+const profileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 512 * 1024, files: 1 },
+  fileFilter: (_req, file, callback) => {
+    if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.mimetype)) {
+      return callback(new Error('Please upload a JPG, PNG, GIF, or WEBP image.'));
+    }
+    callback(null, true);
+  }
+});
+
+function detectProfileImageType(buffer) {
+  if (!buffer || buffer.length < 12) return null;
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
+  if (buffer.subarray(0, 6).toString('ascii') === 'GIF87a' || buffer.subarray(0, 6).toString('ascii') === 'GIF89a') return 'image/gif';
+  if (buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  return null;
+}
+
+function handleProfileUpload(req, res, next) {
+  profileUpload.single('profile_image')(req, res, (error) => {
+    if (!error) return next();
+    req.session.error = error.code === 'LIMIT_FILE_SIZE'
+      ? 'Profile pictures must be 512 KB or smaller.'
+      : error.message || 'Unable to upload that profile picture.';
+    return res.redirect('/user/profile');
+  });
+}
 
 function hasTransferPin(user) {
   return Boolean(user && user.transfer_pin_hash);
@@ -107,6 +139,37 @@ router.get('/profile', requireAuth, (req, res) => {
     page: 'profile',
     user
   });
+});
+
+router.post('/profile/photo', requireAuth, handleProfileUpload, async (req, res) => {
+  if (!req.file) {
+    req.session.error = 'Please choose a profile picture to upload.';
+    return res.redirect('/user/profile');
+  }
+
+  const imageType = detectProfileImageType(req.file.buffer);
+  if (!imageType) {
+    req.session.error = 'That file is not a supported image. Please upload a JPG, PNG, GIF, or WEBP image.';
+    return res.redirect('/user/profile');
+  }
+
+  const profileImage = `data:${imageType};base64,${req.file.buffer.toString('base64')}`;
+  const userId = req.session.userId;
+  db.prepare('UPDATE users SET profile_image = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(profileImage, userId);
+
+  req.session.user = { ...(req.session.user || {}), profile_image: profileImage };
+  try {
+    const synced = await syncUserBundleToFirestore(userId);
+    if (!synced && (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)) {
+      req.session.error = 'Profile picture saved locally, but remote sync is unavailable. It may not persist across devices yet.';
+    } else {
+      req.session.success = 'Profile picture updated successfully.';
+    }
+  } catch (error) {
+    console.error(`Failed to sync profile picture for user ${userId}:`, error);
+    req.session.error = 'Profile picture saved locally, but could not be synced across devices yet.';
+  }
+  res.redirect('/user/profile');
 });
 
 router.post('/profile', requireAuth, [

@@ -1,9 +1,11 @@
-const { db } = require('../database');
+'use strict';
 
+const { createFirestoreRepository } = require('../services/firestore-rest');
+const repository = createFirestoreRepository();
 const NON_OPERABLE_ACCOUNT_STATUSES = new Set(['frozen', 'blocked', 'closed']);
 
 function requireAuth(req, res, next) {
-  if (!req.session.userId) {
+  if (!req.auth || !req.auth.uid) {
     req.session.error = 'Please login to access this page.';
     return res.redirect('/auth/login');
   }
@@ -11,12 +13,12 @@ function requireAuth(req, res, next) {
 }
 
 function requireVerified(req, res, next) {
-  const sessionUser = req.user || req.session.user || null;
-  if (sessionUser && Number(sessionUser.is_frozen) === 1) {
+  const sessionUser = req.user || null;
+  if (sessionUser && (sessionUser.is_frozen === true || Number(sessionUser.is_frozen) === 1)) {
     req.session.error = 'Your account has been frozen. Please contact support.';
     return res.redirect('/auth/login');
   }
-  if (!sessionUser || Number(sessionUser.is_verified) !== 1) {
+  if (!sessionUser || !(sessionUser.is_verified === true || Number(sessionUser.is_verified) === 1)) {
     req.session.error = 'Complete and approve your KYC verification before using this feature.';
     return res.redirect('/kyc');
   }
@@ -24,47 +26,29 @@ function requireVerified(req, res, next) {
 }
 
 function requireAdmin(req, res, next) {
-  if (!req.session.userId) {
+  if (!req.auth || !req.auth.uid) {
     req.session.error = 'Please login to access this page.';
     return res.redirect('/auth/login');
   }
-  if (!req.session.user || Number(req.session.user.is_admin) !== 1) {
+  if (!req.user || !(req.user.is_admin === true || Number(req.user.is_admin) === 1 || req.user.role === 'admin')) {
     req.session.error = 'Access denied. Admin privileges required.';
     return res.redirect('/user/dashboard');
   }
   next();
 }
 
-function getUserAccounts(userId, options = {}) {
-  let query = 'SELECT * FROM accounts WHERE user_id = ?';
-  const params = [userId];
-
-  if (options.operableOnly) {
-    query += " AND status = 'active'";
-  }
-
-  query += ' ORDER BY id';
-  return db.prepare(query).all(...params);
+async function getUserAccounts(userId, options = {}) {
+  const filters = [{ field: 'user_id', op: 'EQUAL', value: String(userId) }];
+  if (options.operableOnly) filters.push({ field: 'status', op: 'EQUAL', value: 'active' });
+  return repository.list('accounts', filters, { orderBy: { field: 'created_at', direction: 'ASCENDING' }, limit: 100 });
 }
 
 function getAccountStatusMessage(account, action = 'complete this action') {
-  if (!account) {
-    return 'Invalid account selected.';
-  }
-
+  if (!account) return 'Invalid account selected.';
   const status = String(account.status || 'active').toLowerCase();
-  if (!NON_OPERABLE_ACCOUNT_STATUSES.has(status)) {
-    return null;
-  }
-
-  if (status === 'frozen') {
-    return `This account is frozen and cannot be used to ${action}.`;
-  }
-
-  if (status === 'blocked') {
-    return `This account is blocked and cannot be used to ${action}.`;
-  }
-
+  if (!NON_OPERABLE_ACCOUNT_STATUSES.has(status)) return null;
+  if (status === 'frozen') return `This account is frozen and cannot be used to ${action}.`;
+  if (status === 'blocked') return `This account is blocked and cannot be used to ${action}.`;
   return `This account is closed and cannot be used to ${action}.`;
 }
 
@@ -72,53 +56,58 @@ function isAccountOperable(account) {
   return !getAccountStatusMessage(account);
 }
 
-function getPrimaryAccount(userId) {
-  return db.prepare('SELECT * FROM accounts WHERE user_id = ? ORDER BY id LIMIT 1').get(userId);
+async function getPrimaryAccount(userId) {
+  const accounts = await repository.list('accounts', [{ field: 'user_id', value: String(userId) }], {
+    orderBy: { field: 'created_at', direction: 'ASCENDING' }, limit: 1
+  });
+  return accounts[0] || null;
 }
 
-function getRecentTransactions(userId, limit = 10) {
-  return db.prepare(`
-    SELECT t.*, a.account_number, a.account_name
-    FROM transactions t
-    JOIN accounts a ON t.account_id = a.id
-    WHERE t.user_id = ?
-    ORDER BY t.created_at DESC
-    LIMIT ?
-  `).all(userId, limit);
+async function getRecentTransactions(userId, limit = 10) {
+  const [transactions, accounts] = await Promise.all([
+    repository.list('transactions', [{ field: 'user_id', value: String(userId) }], {
+      orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit
+    }),
+    repository.list('accounts', [{ field: 'user_id', value: String(userId) }], { limit: 100 })
+  ]);
+  const byId = new Map(accounts.map((account) => [String(account.id), account]));
+  return transactions.map((transaction) => ({
+    ...transaction,
+    account_number: byId.get(String(transaction.account_id))?.account_number || '',
+    account_name: byId.get(String(transaction.account_id))?.account_name || ''
+  }));
 }
 
-function getNotifications(userId, limit = 10) {
-  return db.prepare(`
-    SELECT * FROM notifications
-    WHERE user_id = ?
-    ORDER BY created_at DESC
-    LIMIT ?
-  `).all(userId, limit);
+async function getNotifications(userId, limit = 10) {
+  return repository.list('notifications', [{ field: 'user_id', value: String(userId) }], {
+    orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit
+  });
 }
 
-function addNotification(userId, title, message, type = 'info') {
-  return db.prepare(`
-    INSERT INTO notifications (user_id, title, message, type)
-    VALUES (?, ?, ?, ?)
-  `).run(userId, title, message, type);
+async function addNotification(userId, title, message, type = 'info') {
+  return repository.create('notifications', {
+    user_id: String(userId), title, message, type,
+    is_read: false,
+    created_at: new Date().toISOString()
+  });
 }
 
-function addAuditLog(adminId, action, targetType, targetId, details, ip) {
-  return db.prepare(`
-    INSERT INTO audit_logs (admin_id, action, target_type, target_id, details, ip_address)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(adminId, action, targetType, targetId, details, ip);
+async function addAuditLog(adminId, action, targetType, targetId, details, ip) {
+  return repository.create('audit_logs', {
+    admin_id: String(adminId), action, target_type: targetType,
+    target_id: String(targetId), details: String(details || ''),
+    ip_address: ip || '', created_at: new Date().toISOString()
+  });
 }
 
 function formatCurrency(amount, currency = 'AUD') {
-  return new Intl.NumberFormat('en-AU', {
-    style: 'currency',
-    currency: currency
-  }).format(amount || 0);
+  return new Intl.NumberFormat('en-AU', { style: 'currency', currency }).format(amount || 0);
 }
 
 function generateAccountNumber() {
-  return '200' + Math.random().toString().slice(2, 10);
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return '200' + Array.from(bytes, (value) => String(value % 10)).join('');
 }
 
 module.exports = {

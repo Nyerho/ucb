@@ -5,3 +5,13 @@ database.db-wal
 database.db-shm
 .env
 npm-debug.log*
+
+# Secrets, identity uploads, and runtime data
+.env.*
+!.env.example
+*service-account*.json
+*firebase-admin*.json
+private-uploads/
+public/uploads/kyc/
+.worker-dist/
+.wrangler/

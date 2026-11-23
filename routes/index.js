@@ -1,8 +1,10 @@
 const express = require('express');
-const router = express.Router();
-const { db } = require('../database');
+const { createFirestoreRepository } = require('../services/firestore-rest');
 
-router.get('/', (req, res) => {
+const router = express.Router();
+const repo = createFirestoreRepository();
+
+router.get('/', async (req, res) => {
   if (req.session.userId) {
     if (req.session.user && req.session.user.is_admin === 1) {
       return res.redirect('/admin/dashboard');
@@ -10,18 +12,26 @@ router.get('/', (req, res) => {
     return res.redirect('/user/dashboard');
   }
 
-  const stats = {
-    customers: db.prepare('SELECT COUNT(*) as count FROM users WHERE is_admin = 0').get().count,
-    accounts: db.prepare('SELECT COUNT(*) as count FROM accounts').get().count,
-    branches: 58,
-    years: 42
-  };
+  try {
+    const [users, accounts] = await Promise.all([
+      repo.list('users', [{ field: 'is_admin', op: 'EQUAL', value: 0 }]),
+      repo.list('accounts')
+    ]);
+    const stats = {
+      customers: users.length,
+      accounts: accounts.length,
+      branches: 58,
+      years: 42
+    };
 
-  res.render('index', {
-    title: 'United Credit Bank - Australian Banking Excellence',
-    page: 'home',
-    stats
-  });
+    return res.render('index', {
+      title: 'United Credit Bank - Australian Banking Excellence',
+      page: 'home',
+      stats
+    });
+  } catch (error) {
+    return res.status(503).send('Banking service is temporarily unavailable. Please try again later.');
+  }
 });
 
 router.get('/about', (req, res) => {

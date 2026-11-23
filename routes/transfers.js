@@ -1,405 +1,208 @@
+'use strict';
+
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { db } = require('../database');
-const {
-  requireAuth,
-  requireVerified,
-  getUserAccounts,
-  getAccountStatusMessage,
-  addNotification
-} = require('../middleware/auth');
-const {
-  isFirestoreEnabled,
-  syncAccountToFirestore,
-  syncTransactionToFirestore
-} = require('../services/firestore-sync');
+const crypto = require('crypto');
+const { createFirestoreRepository } = require('../services/firestore-rest');
+const { toMinorUnits, fromMinorUnits } = require('../services/money');
+const { requireAuth, requireVerified, getAccountStatusMessage } = require('../middleware/auth');
 const { sendTransactionActivityEmailById } = require('../services/email');
 
 const router = express.Router();
-
+router.use(require('../middleware/production-financial-gate'));
+const repo = createFirestoreRepository();
 const OUTGOING_TYPES = new Set(['local_transfer', 'international_transfer', 'withdrawal', 'bill_payment', 'loan_payment']);
+const nowIso = () => new Date().toISOString();
+const sessionUid = req => String(req.session.userId);
+const asMinor = (account, key) => Number.isSafeInteger(account[`${key}_minor`]) ? account[`${key}_minor`] : 0;
 
 function queueTransactionEmail(txnId, note) {
   if (!txnId) return;
-  sendTransactionActivityEmailById(txnId, note ? { note } : {}).catch((error) => {
-    console.error(`Failed to send transaction email for txn ${txnId}:`, error);
-  });
+  sendTransactionActivityEmailById(txnId, note ? { note } : {}).catch(error => console.error(`Failed to send transaction email for txn ${txnId}:`, error));
 }
-
-function getTransferUser(userId) {
-  return db.prepare('SELECT id, first_name, last_name, transfer_pin_hash FROM users WHERE id = ?').get(userId);
-}
-
-async function validateTransferPin(userId, pin) {
-  const user = getTransferUser(userId);
-  if (!user || !user.transfer_pin_hash) {
-    return { ok: false, code: 'missing' };
-  }
-  if (!pin) {
-    return { ok: false, code: 'required' };
-  }
+async function getTransferUser(uid) { return repo.get('users', uid); }
+async function validateTransferPin(uid, pin) {
+  const user = await getTransferUser(uid);
+  if (!user || !user.transfer_pin_hash) return { ok: false, code: 'missing' };
+  if (!pin) return { ok: false, code: 'required' };
   const matches = await bcrypt.compare(pin, user.transfer_pin_hash);
   return { ok: matches, code: matches ? 'ok' : 'invalid' };
 }
+async function getAccounts(uid, operableOnly = false) {
+  let list = await repo.list('accounts', [{ field: 'user_id', value: uid }]);
+  list = list.map(a => ({ ...a, balance: fromMinorUnits(asMinor(a, 'balance')), available_balance: fromMinorUnits(asMinor(a, 'available_balance')) }));
+  if (operableOnly) list = list.filter(a => !getAccountStatusMessage(a, 'make transfers'));
+  return list;
+}
+async function getBeneficiaries(uid, international) {
+  return repo.list('beneficiaries', [{ field: 'user_id', value: uid }, { field: 'is_international', value: international }]);
+}
+async function getRecent(uid) {
+  const txns = await repo.list('transactions', [{ field: 'user_id', value: uid }], { orderBy: { field: 'created_at', direction: 'desc' }, limit: 100 });
+  const recent = txns.filter(t => ['transfer', 'international_transfer', 'local_transfer'].includes(t.transaction_type)).slice(0, 10);
+  return Promise.all(recent.map(async t => {
+    const account = await repo.get('accounts', t.account_id);
+    return { ...displayTransaction(t), from_account: account?.account_name || '' };
+  }));
+}
+function displayTransaction(t) {
+  return { ...t, amount: fromMinorUnits(t.amount_minor || 0), fee: fromMinorUnits(t.fee_minor || 0), converted_amount: t.converted_amount_minor === undefined ? undefined : fromMinorUnits(t.converted_amount_minor) };
+}
+async function addNotification(uid, title, message, type) {
+  await repo.create('notifications', { user_id: uid, title, message, type, is_read: false, created_at: nowIso() }, crypto.randomUUID());
+}
+function failClosed(res, req, error) {
+  console.error('Firestore transfer operation failed:', error);
+  if (res.headersSent) return;
+  if (req.accepts('html')) { req.session.error = 'Transfers are temporarily unavailable. Please try again later.'; return res.redirect('/transfers'); }
+  return res.status(503).json({ error: 'Transfers are temporarily unavailable.' });
+}
+function pinError(req, pinState, path) {
+  req.session.error = pinState.code === 'missing' ? 'Please create your transfer PIN in Settings before making transfers.' : pinState.code === 'required' ? 'Transfer PIN is required to authorise this transfer.' : 'Transfer PIN is incorrect.';
+  return pinState.code === 'missing' ? '/user/settings' : path;
+}
 
-router.get('/', requireAuth, requireVerified, (req, res) => {
-  const accounts = getUserAccounts(req.session.userId);
-  const beneficiaries = db.prepare('SELECT * FROM beneficiaries WHERE user_id = ?').all(req.session.userId);
-  const recent = db.prepare(`
-    SELECT t.*, a.account_name as from_account
-    FROM transactions t
-    JOIN accounts a ON t.account_id = a.id
-    WHERE t.user_id = ? AND t.transaction_type IN ('transfer', 'international_transfer', 'local_transfer')
-    ORDER BY t.created_at DESC
-    LIMIT 10
-  `).all(req.session.userId);
-
-  res.render('transfers/index', {
-    title: 'Transfers - United Credit Bank',
-    page: 'transfers',
-    accounts,
-    beneficiaries,
-    recent
-  });
+router.get('/', requireAuth, requireVerified, async (req, res) => {
+  try {
+    const uid = sessionUid(req);
+    const [accounts, beneficiaries, recent] = await Promise.all([getAccounts(uid), repo.list('beneficiaries', [{ field: 'user_id', value: uid }]), getRecent(uid)]);
+    res.render('transfers/index', { title: 'Transfers - United Credit Bank', page: 'transfers', accounts, beneficiaries, recent });
+  } catch (error) { failClosed(res, req, error); }
 });
 
-router.get('/local', requireAuth, requireVerified, (req, res) => {
-  const accounts = getUserAccounts(req.session.userId, { operableOnly: true });
-  const beneficiaries = db.prepare('SELECT * FROM beneficiaries WHERE user_id = ? AND is_international = 0').all(req.session.userId);
-  const selectedAccountId = accounts.find(acc => String(acc.id) === String(req.query.from))?.id || accounts[0]?.id || null;
-  const transferUser = getTransferUser(req.session.userId);
-
-  res.render('transfers/local', {
-    title: 'Local Transfer - United Credit Bank',
-    page: 'transfers',
-    accounts,
-    beneficiaries,
-    selectedAccountId,
-    hasTransferPin: Boolean(transferUser && transferUser.transfer_pin_hash)
-  });
+router.get('/local', requireAuth, requireVerified, async (req, res) => {
+  try {
+    const uid = sessionUid(req);
+    const [accounts, beneficiaries, user] = await Promise.all([getAccounts(uid, true), getBeneficiaries(uid, false), getTransferUser(uid)]);
+    const selectedAccountId = accounts.find(a => String(a.id) === String(req.query.from))?.id || accounts[0]?.id || null;
+    res.render('transfers/local', { title: 'Local Transfer - United Credit Bank', page: 'transfers', accounts, beneficiaries, selectedAccountId, hasTransferPin: Boolean(user?.transfer_pin_hash) });
+  } catch (error) { failClosed(res, req, error); }
 });
 
 router.post('/local', requireAuth, requireVerified, async (req, res) => {
-  const { from_account, to_account, to_bsb, to_name, amount, description, reference, save_beneficiary, beneficiary_name, transfer_pin } = req.body;
-  const pinState = await validateTransferPin(req.session.userId, transfer_pin);
-  if (!pinState.ok) {
-    req.session.error = pinState.code === 'missing'
-      ? 'Please create your transfer PIN in Settings before making transfers.'
-      : pinState.code === 'required'
-        ? 'Transfer PIN is required to authorise this transfer.'
-        : 'Transfer PIN is incorrect.';
-    return res.redirect(pinState.code === 'missing' ? '/user/settings' : '/transfers/local');
+  const uid = sessionUid(req), { from_account, to_account, to_bsb, to_name, description, reference, save_beneficiary, beneficiary_name, transfer_pin } = req.body;
+  try {
+    const pin = await validateTransferPin(uid, transfer_pin);
+    if (!pin.ok) { req.session.error = pinError(req, pin, '/transfers/local'); return res.redirect(req.session.error.includes('Settings') ? '/user/settings' : '/transfers/local'); }
+    const amountMinor = toMinorUnits(req.body.amount);
+    if (amountMinor <= 0) throw new TypeError('Please enter a valid amount.');
+    const feeMinor = amountMinor > 1_000_000 ? 1500 : 0;
+    const status = amountMinor >= 500_000 ? 'pending' : 'completed';
+    const txnId = crypto.randomUUID(), created = nowIso();
+    await repo.runTransaction(async tx => {
+      const account = await tx.get('accounts', String(from_account));
+      if (!account || account.user_id !== uid) throw new Error('Invalid source account.');
+      const restriction = getAccountStatusMessage({ ...account, balance: fromMinorUnits(asMinor(account, 'balance')), available_balance: fromMinorUnits(asMinor(account, 'available_balance')) }, 'make transfers');
+      if (restriction) throw new Error(restriction);
+      const available = asMinor(account, 'available_balance'), total = amountMinor + feeMinor;
+      if (total > available) throw new Error('Insufficient funds available.');
+      const balance = asMinor(account, 'balance');
+      tx.update('accounts', String(from_account), { available_balance_minor: available - total, ...(status === 'completed' ? { balance_minor: balance - total } : {}), updated_at: created });
+      tx.create('transactions', txnId, { account_id: String(from_account), user_id: uid, transaction_type: 'local_transfer', amount_minor: amountMinor, fee_minor: feeMinor, currency: 'AUD', description: description || '', reference: reference || '', recipient_name: to_name || '', recipient_account: String(to_account || ''), recipient_bsb: to_bsb || '', recipient_bank: 'Australia', status, created_at: created });
+      tx.create('ledger_entries', crypto.randomUUID(), { user_id: uid, account_id: String(from_account), transaction_id: txnId, entry_type: 'debit', amount_minor: total, currency: 'AUD', created_at: created, description: 'Local transfer' });
+      if (save_beneficiary && beneficiary_name) {
+        const found = await tx.list('beneficiaries', [{ field: 'user_id', value: uid }, { field: 'account_number', value: String(to_account || '') }], { limit: 1 });
+        if (!found.length) tx.create('beneficiaries', crypto.randomUUID(), { user_id: uid, name: beneficiary_name || to_name || '', account_number: String(to_account || ''), bsb: to_bsb || '', bank_name: 'Australia', country: 'Australia', is_international: false, created_at: created });
+      }
+    });
+    await addNotification(uid, status === 'completed' ? 'Transfer Completed' : 'Transfer Pending', `${status === 'completed' ? 'Transfer completed' : 'Transfer awaiting approval'} to ${to_name || ''}`, status === 'completed' ? 'success' : 'warning');
+    queueTransactionEmail(txnId, status === 'completed' ? 'Your transfer has been completed.' : 'Your transfer is pending approval.');
+    req.session.success = status === 'completed' ? 'Transfer completed successfully!' : 'Transfer submitted for approval. You will be notified once processed.';
+    return res.redirect('/transfers');
+  } catch (error) {
+    if (error instanceof TypeError || error.message === 'Insufficient funds available.' || error.message === 'Invalid source account.' || /restricted|frozen|suspended|closed/i.test(error.message)) { req.session.error = error.message; return res.redirect('/transfers/local'); }
+    return failClosed(res, req, error);
   }
-
-  const sourceAccount = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(from_account, req.session.userId);
-  if (!sourceAccount) {
-    req.session.error = 'Invalid source account.';
-    return res.redirect('/transfers/local');
-  }
-
-  const restrictionMessage = getAccountStatusMessage(sourceAccount, 'make transfers');
-  if (restrictionMessage) {
-    req.session.error = restrictionMessage;
-    return res.redirect('/transfers/local');
-  }
-
-  if (parseFloat(amount) > parseFloat(sourceAccount.available_balance)) {
-    req.session.error = 'Insufficient funds available.';
-    return res.redirect('/transfers/local');
-  }
-
-  if (parseFloat(amount) <= 0) {
-    req.session.error = 'Please enter a valid amount.';
-    return res.redirect('/transfers/local');
-  }
-
-  const fee = parseFloat(amount) > 10000 ? 15 : 0;
-  const needsApproval = parseFloat(amount) >= 5000;
-  const status = needsApproval ? 'pending' : 'completed';
-
-  const insertInfo = db.prepare(`
-    INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, reference, recipient_name, recipient_account, recipient_bsb, recipient_bank, status, fee)
-    VALUES (?, ?, 'local_transfer', ?, 'AUD', ?, ?, ?, ?, ?, 'Australia', ?, ?)
-  `).run(
-    from_account,
-    req.session.userId,
-    amount,
-    description || '',
-    reference || '',
-    to_name,
-    to_account,
-    to_bsb || '',
-    status,
-    fee
-  );
-  const txnId = insertInfo.lastInsertRowid;
-
-  if (status === 'completed') {
-    const newBalance = parseFloat(sourceAccount.balance) - parseFloat(amount) - fee;
-    const newAvailable = parseFloat(sourceAccount.available_balance) - parseFloat(amount) - fee;
-    db.prepare('UPDATE accounts SET balance = ?, available_balance = ? WHERE id = ?').run(newBalance, newAvailable, from_account);
-
-    addNotification(req.session.userId, 'Transfer Completed', `$${parseFloat(amount).toLocaleString()} transferred to ${to_name}`, 'success');
-  } else {
-    const holdAmount = parseFloat(amount) + fee;
-    const newAvailable = parseFloat(sourceAccount.available_balance) - holdAmount;
-    db.prepare('UPDATE accounts SET available_balance = ? WHERE id = ?').run(newAvailable, from_account);
-
-    addNotification(req.session.userId, 'Transfer Pending', `Transfer of $${parseFloat(amount).toLocaleString()} is awaiting approval`, 'warning');
-  }
-
-  if (isFirestoreEnabled()) {
-    try {
-      const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(from_account);
-      const newTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
-      await Promise.all([
-        syncAccountToFirestore(updatedAccount),
-        syncTransactionToFirestore(newTxn)
-      ]);
-    } catch (err) {
-      console.error('Failed to sync local transfer to Firestore:', err);
-    }
-  }
-  queueTransactionEmail(txnId, status === 'completed' ? 'Your transfer has been completed.' : 'Your transfer is pending approval.');
-
-  if (save_beneficiary && beneficiary_name) {
-    const exists = db.prepare('SELECT id FROM beneficiaries WHERE user_id = ? AND account_number = ?').get(req.session.userId, to_account);
-    if (!exists) {
-      db.prepare(`
-        INSERT INTO beneficiaries (user_id, name, account_number, bsb, bank_name, country, is_international)
-        VALUES (?, ?, ?, ?, 'Australia', 'Australia', 0)
-      `).run(req.session.userId, beneficiary_name || to_name, to_account, to_bsb || '');
-    }
-  }
-
-  req.session.success = status === 'completed' 
-    ? `Transfer of $${parseFloat(amount).toLocaleString('en-AU')} completed successfully!`
-    : `Transfer of $${parseFloat(amount).toLocaleString('en-AU')} submitted for approval. You will be notified once processed.`;
-  res.redirect('/transfers');
 });
 
-router.get('/international', requireAuth, requireVerified, (req, res) => {
-  const accounts = getUserAccounts(req.session.userId, { operableOnly: true });
-  const beneficiaries = db.prepare('SELECT * FROM beneficiaries WHERE user_id = ? AND is_international = 1').all(req.session.userId);
-  const countries = require('../data/countries');
-  const currencies = require('../data/currencies');
-  const selectedAccountId = accounts.find(acc => String(acc.id) === String(req.query.from))?.id || accounts[0]?.id || null;
-  const transferUser = getTransferUser(req.session.userId);
-
-  res.render('transfers/international', {
-    title: 'International Transfer - United Credit Bank',
-    page: 'transfers',
-    accounts,
-    selectedAccountId,
-    hasTransferPin: Boolean(transferUser && transferUser.transfer_pin_hash),
-    beneficiaries,
-    countries,
-    currencies,
-    rates: {
-      AUD: 1,
-      USD: 0.66, GBP: 0.52, EUR: 0.60, NZD: 1.10, JPY: 99.50,
-      SGD: 0.88, HKD: 5.15, CAD: 0.89, INR: 54.80, CNY: 4.75
-    },
-    exchangeRates: {
-      USD: 0.66, GBP: 0.52, EUR: 0.60, NZD: 1.10, JPY: 99.50,
-      SGD: 0.88, HKD: 5.15, CAD: 0.89, INR: 54.80, CNY: 4.75
-    }
-  });
+router.get('/international', requireAuth, requireVerified, async (req, res) => {
+  try {
+    const uid = sessionUid(req);
+    const [accounts, beneficiaries, user] = await Promise.all([getAccounts(uid, true), getBeneficiaries(uid, true), getTransferUser(uid)]);
+    const selectedAccountId = accounts.find(a => String(a.id) === String(req.query.from))?.id || accounts[0]?.id || null;
+    const countries = require('../data/countries'), currencies = require('../data/currencies');
+    const rates = { AUD: 1, USD: 0.66, GBP: 0.52, EUR: 0.60, NZD: 1.10, JPY: 99.50, SGD: 0.88, HKD: 5.15, CAD: 0.89, INR: 54.80, CNY: 4.75 };
+    res.render('transfers/international', { title: 'International Transfer - United Credit Bank', page: 'transfers', accounts, selectedAccountId, hasTransferPin: Boolean(user?.transfer_pin_hash), beneficiaries, countries, currencies, rates, exchangeRates: rates });
+  } catch (error) { failClosed(res, req, error); }
 });
 
 router.post('/international', requireAuth, requireVerified, async (req, res) => {
-  const {
-    from_account,
-    to_name,
-    swift_code,
-    iban,
-    country,
-    currency,
-    purpose,
-    reference,
-    save_beneficiary,
-    beneficiary_name,
-    transfer_pin
-  } = req.body;
-  const pinState = await validateTransferPin(req.session.userId, transfer_pin);
-  if (!pinState.ok) {
-    req.session.error = pinState.code === 'missing'
-      ? 'Please create your transfer PIN in Settings before making transfers.'
-      : pinState.code === 'required'
-        ? 'Transfer PIN is required to authorise this transfer.'
-        : 'Transfer PIN is incorrect.';
-    return res.redirect(pinState.code === 'missing' ? '/user/settings' : '/transfers/international');
+  const uid = sessionUid(req), { to_name, swift_code, country, currency, purpose, reference, save_beneficiary, beneficiary_name, transfer_pin } = req.body;
+  try {
+    const pin = await validateTransferPin(uid, transfer_pin);
+    if (!pin.ok) { req.session.error = pinError(req, pin, '/transfers/international'); return res.redirect(req.session.error.includes('Settings') ? '/user/settings' : '/transfers/international'); }
+    const amountMinor = toMinorUnits(req.body.amount_aud || req.body.amount);
+    if (amountMinor <= 0) throw new TypeError('Please enter a valid amount.');
+    const rates = { AUD: 1, USD: 0.66, GBP: 0.52, EUR: 0.60, NZD: 1.10, JPY: 99.50, SGD: 0.88, HKD: 5.15, CAD: 0.89, INR: 54.80, CNY: 4.75 };
+    const resolvedRate = Number(req.body.exchange_rate) || rates[currency] || 1;
+    const converted = Number(req.body.amount_foreign) || (fromMinorUnits(amountMinor) * resolvedRate);
+    const convertedMinor = Math.round(converted * 100), feeMinor = 2500, total = amountMinor + feeMinor;
+    if (!Number.isSafeInteger(convertedMinor)) throw new TypeError('Invalid converted amount.');
+    const accountId = String(req.body.from_account), recipient = String(req.body.to_account || req.body.iban || ''), txnId = crypto.randomUUID(), created = nowIso();
+    await repo.runTransaction(async tx => {
+      const account = await tx.get('accounts', accountId);
+      if (!account || account.user_id !== uid) throw new Error('Invalid source account.');
+      const restriction = getAccountStatusMessage({ ...account, balance: fromMinorUnits(asMinor(account, 'balance')), available_balance: fromMinorUnits(asMinor(account, 'available_balance')) }, 'make international transfers');
+      if (restriction) throw new Error(restriction);
+      const available = asMinor(account, 'available_balance');
+      if (total > available) throw new Error('Insufficient funds. International transfers have a $25 fee.');
+      tx.update('accounts', accountId, { available_balance_minor: available - total, updated_at: created });
+      tx.create('transactions', txnId, { account_id: accountId, user_id: uid, transaction_type: 'international_transfer', amount_minor: amountMinor, fee_minor: feeMinor, currency: 'AUD', description: purpose || 'International transfer', reference: reference || '', recipient_name: to_name || '', recipient_account: recipient, swift_code: swift_code || '', iban: req.body.iban || '', country: country || '', status: 'pending', exchange_rate: resolvedRate, converted_amount_minor: convertedMinor, created_at: created });
+      tx.create('ledger_entries', crypto.randomUUID(), { user_id: uid, account_id: accountId, transaction_id: txnId, entry_type: 'hold', amount_minor: total, currency: 'AUD', created_at: created, description: 'International transfer hold' });
+      if (save_beneficiary && beneficiary_name) tx.create('beneficiaries', crypto.randomUUID(), { user_id: uid, name: beneficiary_name || to_name || '', account_number: recipient, swift_code: swift_code || '', iban: req.body.iban || '', country: country || '', is_international: true, created_at: created });
+    });
+    await addNotification(uid, 'International Transfer Pending', `AUD transfer to ${to_name || ''} (${country || ''}) is awaiting approval`, 'warning');
+    queueTransactionEmail(txnId, 'Your international transfer request has been submitted.');
+    req.session.success = 'International transfer submitted for approval.';
+    return res.redirect('/transfers');
+  } catch (error) {
+    if (error instanceof TypeError || error.message.startsWith('Insufficient funds') || error.message === 'Invalid source account.' || /restricted|frozen|suspended|closed/i.test(error.message)) { req.session.error = error.message; return res.redirect('/transfers/international'); }
+    return failClosed(res, req, error);
   }
-  const exchangeRates = {
-    AUD: 1,
-    USD: 0.66, GBP: 0.52, EUR: 0.60, NZD: 1.10, JPY: 99.50,
-    SGD: 0.88, HKD: 5.15, CAD: 0.89, INR: 54.80, CNY: 4.75
-  };
-  const to_account = req.body.to_account || req.body.iban || '';
-  const amount = parseFloat(req.body.amount_aud || req.body.amount);
-  const resolvedRate = parseFloat(req.body.exchange_rate) || exchangeRates[currency] || 1;
-  const convertedAmount = parseFloat(req.body.amount_foreign) || (amount * resolvedRate);
-
-  const sourceAccount = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(from_account, req.session.userId);
-  if (!sourceAccount) {
-    req.session.error = 'Invalid source account.';
-    return res.redirect('/transfers/international');
-  }
-
-  const restrictionMessage = getAccountStatusMessage(sourceAccount, 'make international transfers');
-  if (restrictionMessage) {
-    req.session.error = restrictionMessage;
-    return res.redirect('/transfers/international');
-  }
-
-  const fee = 25;
-  const total = amount + fee;
-
-  if (total > parseFloat(sourceAccount.available_balance)) {
-    req.session.error = 'Insufficient funds. International transfers have a $25 fee.';
-    return res.redirect('/transfers/international');
-  }
-
-  const status = 'pending';
-  const holdAmount = total;
-  const newAvailable = parseFloat(sourceAccount.available_balance) - holdAmount;
-  db.prepare('UPDATE accounts SET available_balance = ? WHERE id = ?').run(newAvailable, from_account);
-
-  const insertInfo = db.prepare(`
-    INSERT INTO transactions (account_id, user_id, transaction_type, amount, currency, description, reference, recipient_name, recipient_account, swift_code, iban, country, status, fee, exchange_rate, converted_amount)
-    VALUES (?, ?, 'international_transfer', ?, 'AUD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    from_account,
-    req.session.userId,
-    amount,
-    purpose || 'International transfer',
-    reference || '',
-    to_name,
-    to_account,
-    swift_code || '',
-    iban || '',
-    country,
-    status,
-    fee,
-    resolvedRate,
-    convertedAmount
-  );
-  const txnId = insertInfo.lastInsertRowid;
-
-  if (isFirestoreEnabled()) {
-    try {
-      const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(from_account);
-      const newTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
-      await Promise.all([
-        syncAccountToFirestore(updatedAccount),
-        syncTransactionToFirestore(newTxn)
-      ]);
-    } catch (err) {
-      console.error('Failed to sync international transfer to Firestore:', err);
-    }
-  }
-  queueTransactionEmail(txnId, 'Your international transfer request has been submitted.');
-
-  if (save_beneficiary && beneficiary_name) {
-    db.prepare(`
-      INSERT INTO beneficiaries (user_id, name, account_number, swift_code, iban, country, is_international)
-      VALUES (?, ?, ?, ?, ?, ?, 1)
-    `).run(req.session.userId, beneficiary_name || to_name, to_account, swift_code || '', iban || '', country);
-  }
-
-  addNotification(req.session.userId, 'International Transfer Pending', `AUD $${amount.toLocaleString()} transfer to ${to_name} (${country}) is awaiting approval`, 'warning');
-  req.session.success = `International transfer of AUD $${amount.toLocaleString('en-AU')} submitted for approval.`;
-  res.redirect('/transfers');
 });
 
-router.get('/history', requireAuth, (req, res) => {
-  const { type, status, from_date, to_date } = req.query;
-
-  let query = `
-    SELECT t.*, a.account_name, a.account_number
-    FROM transactions t
-    JOIN accounts a ON t.account_id = a.id
-    WHERE t.user_id = ?
-  `;
-  const params = [req.session.userId];
-
-  if (type && type !== 'all') {
-    query += ` AND t.transaction_type = ?`;
-    params.push(type);
-  }
-  if (status && status !== 'all') {
-    query += ` AND t.status = ?`;
-    params.push(status);
-  }
-  if (from_date) {
-    query += ` AND DATE(t.created_at) >= ?`;
-    params.push(from_date);
-  }
-  if (to_date) {
-    query += ` AND DATE(t.created_at) <= ?`;
-    params.push(to_date);
-  }
-
-  query += ` ORDER BY t.created_at DESC LIMIT 200`;
-  const transactions = db.prepare(query).all(...params);
-
-  res.render('transfers/history', {
-    title: 'Transfer History - United Credit Bank',
-    page: 'transfers',
-    transactions,
-    filters: req.query
-  });
+router.get('/history', requireAuth, async (req, res) => {
+  try {
+    const uid = sessionUid(req), filters = [{ field: 'user_id', value: uid }];
+    if (req.query.type && req.query.type !== 'all') filters.push({ field: 'transaction_type', value: req.query.type });
+    if (req.query.status && req.query.status !== 'all') filters.push({ field: 'status', value: req.query.status });
+    let transactions = await repo.list('transactions', filters, { orderBy: { field: 'created_at', direction: 'desc' }, limit: 200 });
+    transactions = transactions.filter(t => (!req.query.from_date || String(t.created_at) >= req.query.from_date) && (!req.query.to_date || String(t.created_at).slice(0, 10) <= req.query.to_date));
+    transactions = await Promise.all(transactions.map(async t => { const account = await repo.get('accounts', t.account_id); return { ...displayTransaction(t), account_name: account?.account_name || '', account_number: account?.account_number || '' }; }));
+    res.render('transfers/history', { title: 'Transfer History - United Credit Bank', page: 'transfers', transactions, filters: req.query });
+  } catch (error) { failClosed(res, req, error); }
 });
 
-router.get('/:id', requireAuth, (req, res) => {
-  const transaction = db.prepare(`
-    SELECT t.*, a.account_name, a.account_number, a.bsb as from_bsb
-    FROM transactions t
-    JOIN accounts a ON t.account_id = a.id
-    WHERE t.id = ? AND t.user_id = ?
-  `).get(req.params.id, req.session.userId);
-
-  if (!transaction) {
-    req.session.error = 'Transaction not found.';
-    return res.redirect('/transfers/history');
-  }
-
-  res.render('transfers/detail', {
-    title: 'Transaction Details - United Credit Bank',
-    page: 'transfers',
-    transaction
-  });
+router.get('/:id', requireAuth, async (req, res) => {
+  try {
+    const uid = sessionUid(req), t = await repo.get('transactions', req.params.id);
+    if (!t || t.user_id !== uid) { req.session.error = 'Transaction not found.'; return res.redirect('/transfers/history'); }
+    const account = await repo.get('accounts', t.account_id);
+    res.render('transfers/detail', { title: 'Transaction Details - United Credit Bank', page: 'transfers', transaction: { ...displayTransaction(t), account_name: account?.account_name || '', account_number: account?.account_number || '', from_bsb: account?.bsb || '' } });
+  } catch (error) { failClosed(res, req, error); }
 });
 
 router.post('/:id/cancel', requireAuth, async (req, res) => {
-  const transaction = db.prepare('SELECT * FROM transactions WHERE id = ? AND user_id = ?').get(req.params.id, req.session.userId);
-  if (!transaction || transaction.status !== 'pending') {
-    req.session.error = 'Cannot cancel this transaction.';
-    return res.redirect('/transfers/history');
+  try {
+    const uid = sessionUid(req), id = String(req.params.id), created = nowIso();
+    await repo.runTransaction(async tx => {
+      const t = await tx.get('transactions', id);
+      if (!t || t.user_id !== uid || t.status !== 'pending') throw new Error('Cannot cancel this transaction.');
+      const account = await tx.get('accounts', t.account_id);
+      if (!account || account.user_id !== uid) throw new Error('Cannot cancel this transaction.');
+      const refund = (t.amount_minor || 0) + (t.fee_minor || 0);
+      tx.update('accounts', t.account_id, { available_balance_minor: asMinor(account, 'available_balance') + refund, updated_at: created });
+      tx.update('transactions', id, { status: 'cancelled', updated_at: created });
+      tx.create('ledger_entries', crypto.randomUUID(), { user_id: uid, account_id: t.account_id, transaction_id: id, entry_type: 'release', amount_minor: refund, currency: t.currency || 'AUD', created_at: created, description: 'Pending transfer cancellation release' });
+    });
+    await addNotification(uid, 'Transfer Cancelled', `Transfer ${id} has been cancelled`, 'info');
+    queueTransactionEmail(id, 'This transaction was cancelled.');
+    req.session.success = 'Transfer cancelled successfully.';
+    return res.redirect(`/transfers/${id}`);
+  } catch (error) {
+    if (error.message === 'Cannot cancel this transaction.') { req.session.error = error.message; return res.redirect('/transfers/history'); }
+    return failClosed(res, req, error);
   }
-
-  const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(transaction.account_id);
-  const refund = parseFloat(transaction.amount) + parseFloat(transaction.fee);
-  db.prepare('UPDATE accounts SET available_balance = available_balance + ? WHERE id = ?').run(refund, account.id);
-  db.prepare('UPDATE transactions SET status = ? WHERE id = ?').run('cancelled', req.params.id);
-
-  if (isFirestoreEnabled()) {
-    try {
-      const updatedAccount = db.prepare('SELECT * FROM accounts WHERE id = ?').get(account.id);
-      const updatedTxn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(req.params.id);
-      await Promise.all([
-        syncAccountToFirestore(updatedAccount),
-        syncTransactionToFirestore(updatedTxn)
-      ]);
-    } catch (error) {
-      console.error('Failed to sync cancelled transfer to Firestore:', error);
-    }
-  }
-
-  addNotification(req.session.userId, 'Transfer Cancelled', `Transfer ${transaction.id} has been cancelled`, 'info');
-  queueTransactionEmail(req.params.id, 'This transaction was cancelled.');
-  req.session.success = 'Transfer cancelled successfully.';
-  res.redirect(`/transfers/${req.params.id}`);
 });
 
 module.exports = router;

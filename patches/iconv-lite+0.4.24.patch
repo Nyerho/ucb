@@ -1,0 +1,13 @@
+diff --git a/node_modules/iconv-lite/lib/index.js b/node_modules/iconv-lite/lib/index.js
+index 5391919..2b2b815 100644
+--- a/node_modules/iconv-lite/lib/index.js
++++ b/node_modules/iconv-lite/lib/index.js
+@@ -136,7 +136,7 @@ iconv.getDecoder = function getDecoder(encoding, options) {
+
+ // Load extensions in Node. All of them are omitted in Browserify build via 'browser' field in package.json.
+ var nodeVer = typeof process !== 'undefined' && process.versions && process.versions.node;
+-if (nodeVer) {
++if (nodeVer && !(process.env && process.env.WORKER_RUNTIME === '1')) {
+
+     // Load streaming support in Node v0.10+
+     var nodeVerArr = nodeVer.split(".").map(Number);

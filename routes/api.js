@@ -1,108 +1,160 @@
+'use strict';
 const express = require('express');
-const { db } = require('../database');
+const { createFirestoreRepository } = require('../services/firestore-rest');
+const { fromMinorUnits } = require('../services/money');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
-const {
-  getFirestoreAdminDiagnostics,
-  logFirestoreDiagnostics,
-  hasAdminCredentials,
-  getResolvedProjectId
-} = require('../lib/firebase-admin');
-const {
-  isFirestoreEnabled,
-  firestoreUserExistsByEmail,
-  syncUserBundleToFirestore
-} = require('../services/firestore-sync');
+const { getRuntimeEnv } = require('../lib/runtime-env');
 
 const router = express.Router();
+const repo = createFirestoreRepository();
 
-router.get('/user/dashboard-stats', requireAuth, (req, res) => {
-  const userId = req.session.userId;
-  const accounts = db.prepare('SELECT * FROM accounts WHERE user_id = ?').all(userId);
-  const totalBalance = accounts.reduce((s, a) => s + parseFloat(a.balance), 0);
-  const totalAvailable = accounts.reduce((s, a) => s + parseFloat(a.available_balance), 0);
+function displayMoney(document, field) {
+  const minorField = `${field}_minor`;
+  const minor = document[minorField];
+  if (!Number.isSafeInteger(minor)) return 0;
+  return fromMinorUnits(minor);
+}
 
-  const txn7d = db.prepare(`
-    SELECT transaction_type, SUM(amount) as total
-    FROM transactions
-    WHERE user_id = ? AND status = 'completed' AND created_at >= DATE('now', '-7 days')
-    GROUP BY transaction_type
-  `).all(userId);
+function withAccountDisplay(account) {
+  return {
+    ...account,
+    balance: displayMoney(account, 'balance'),
+    available_balance: displayMoney(account, 'available_balance')
+  };
+}
 
-  res.json({
-    totalBalance,
-    totalAvailable,
-    accountCount: accounts.length,
-    last7Days: txn7d
-  });
+router.get('/user/dashboard-stats', requireAuth, async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    const accounts = await repo.list('accounts', [{ field: 'user_id', value: userId }]);
+    const totalBalance = accounts.reduce((sum, account) => sum + displayMoney(account, 'balance'), 0);
+    const totalAvailable = accounts.reduce((sum, account) => sum + displayMoney(account, 'available_balance'), 0);
+    const transactions = await repo.list('transactions', [
+      { field: 'user_id', value: userId },
+      { field: 'status', value: 'completed' }
+    ], { orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit: 1000 });
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const totals = new Map();
+    for (const transaction of transactions) {
+      const createdAt = Date.parse(transaction.created_at || '');
+      if (!Number.isFinite(createdAt) || createdAt < cutoff) continue;
+      const type = transaction.transaction_type;
+      if (!type) continue;
+      const amount = Number.isSafeInteger(transaction.amount_minor) ? fromMinorUnits(transaction.amount_minor) : 0;
+      totals.set(type, (totals.get(type) || 0) + amount);
+    }
+    res.json({
+      totalBalance,
+      totalAvailable,
+      accountCount: accounts.length,
+      last7Days: Array.from(totals, ([transaction_type, total]) => ({ transaction_type, total }))
+    });
+  } catch (error) {
+    console.error('Dashboard Firestore read failed:', error.message);
+    res.status(503).json({ error: 'Service temporarily unavailable.' });
+  }
 });
 
-router.get('/user/notifications', requireAuth, (req, res) => {
-  const notifications = db.prepare(`
-    SELECT * FROM notifications
-    WHERE user_id = ?
-    ORDER BY created_at DESC
-    LIMIT 20
-  `).all(req.session.userId);
-
-  const unread = notifications.filter(n => n.is_read === 0).length;
-  res.json({ notifications, unread });
+router.get('/user/notifications', requireAuth, async (req, res) => {
+  try {
+    const notifications = await repo.list('notifications', [{ field: 'user_id', value: req.session.userId }], {
+      orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit: 20
+    });
+    const unread = notifications.filter((item) => item.is_read === false || item.is_read === 0).length;
+    res.json({ notifications, unread });
+  } catch (error) {
+    console.error('Notifications Firestore read failed:', error.message);
+    res.status(503).json({ error: 'Service temporarily unavailable.' });
+  }
 });
 
-router.post('/user/notifications/:id/read', requireAuth, (req, res) => {
-  db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?').run(req.params.id, req.session.userId);
-  res.json({ success: true });
+router.post('/user/notifications/:id/read', requireAuth, async (req, res) => {
+  try {
+    const notification = await repo.get('notifications', req.params.id);
+    if (notification && notification.user_id === req.session.userId) {
+      await repo.update('notifications', req.params.id, { is_read: true });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Notification update failed:', error.message);
+    res.status(503).json({ error: 'Service temporarily unavailable.' });
+  }
 });
 
-router.post('/user/notifications/read-all', requireAuth, (req, res) => {
-  db.prepare('UPDATE notifications SET is_read = 1 WHERE user_id = ?').run(req.session.userId);
-  res.json({ success: true });
+router.post('/user/notifications/read-all', requireAuth, async (req, res) => {
+  try {
+    const notifications = await repo.list('notifications', [{ field: 'user_id', value: req.session.userId }]);
+    await Promise.all(notifications.filter((item) => item.is_read !== true && item.is_read !== 1)
+      .map((item) => repo.update('notifications', item.id, { is_read: true })));
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Notification bulk update failed:', error.message);
+    res.status(503).json({ error: 'Service temporarily unavailable.' });
+  }
 });
 
-router.get('/user/accounts-summary', requireAuth, (req, res) => {
-  const accounts = db.prepare(`
-    SELECT id, account_number, account_name, account_type, currency, balance, available_balance, status
-    FROM accounts WHERE user_id = ? AND status = 'active'
-  `).all(req.session.userId);
-
-  res.json({ accounts });
+router.get('/user/accounts-summary', requireAuth, async (req, res) => {
+  try {
+    const accounts = await repo.list('accounts', [
+      { field: 'user_id', value: req.session.userId },
+      { field: 'status', value: 'active' }
+    ]);
+    res.json({ accounts: accounts.map((account) => {
+      const display = withAccountDisplay(account);
+      return Object.fromEntries(['id', 'account_number', 'account_name', 'account_type', 'currency', 'balance', 'available_balance', 'status']
+        .filter((key) => display[key] !== undefined).map((key) => [key, display[key]]));
+    }) });
+  } catch (error) {
+    console.error('Account summary Firestore read failed:', error.message);
+    res.status(503).json({ error: 'Service temporarily unavailable.' });
+  }
 });
 
-router.get('/search/beneficiaries', requireAuth, (req, res) => {
-  const q = (req.query.q || '').toLowerCase();
-  const results = db.prepare(`
-    SELECT * FROM beneficiaries
-    WHERE user_id = ? AND (LOWER(name) LIKE ? OR LOWER(account_number) LIKE ?)
-    LIMIT 10
-  `).all(req.session.userId, `%${q}%`, `%${q}%`);
-  res.json({ results });
+router.get('/search/beneficiaries', requireAuth, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').toLowerCase();
+    const beneficiaries = await repo.list('beneficiaries', [{ field: 'user_id', value: req.session.userId }]);
+    const results = beneficiaries.filter((item) => String(item.name || '').toLowerCase().includes(q)
+      || String(item.account_number || '').toLowerCase().includes(q)).slice(0, 10);
+    res.json({ results });
+  } catch (error) {
+    console.error('Beneficiary search Firestore read failed:', error.message);
+    res.status(503).json({ error: 'Service temporarily unavailable.' });
+  }
 });
 
-router.post('/admin/search-users', requireAdmin, (req, res) => {
-  const q = (req.body.query || '').toLowerCase();
-  const users = db.prepare(`
-    SELECT id, first_name, last_name, email, phone, is_frozen, is_verified, created_at
-    FROM users
-    WHERE is_admin = 0 AND (LOWER(first_name) LIKE ? OR LOWER(last_name) LIKE ? OR LOWER(email) LIKE ? OR LOWER(phone) LIKE ?)
-    LIMIT 20
-  `).all(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
-  res.json({ users });
+router.post('/admin/search-users', requireAdmin, async (req, res) => {
+  try {
+    const q = String(req.body.query || '').toLowerCase();
+    const profiles = await repo.list('users', [], { limit: 1000 });
+    const users = profiles.filter((user) => !user.is_admin && ['first_name', 'last_name', 'email', 'phone']
+      .some((field) => String(user[field] || '').toLowerCase().includes(q)))
+      .slice(0, 20)
+      .map((user) => Object.fromEntries(['id', 'first_name', 'last_name', 'email', 'phone', 'is_frozen', 'is_verified', 'created_at']
+        .map((field) => [field, field === 'id' ? user.id : user[field]])));
+    res.json({ users });
+  } catch (error) {
+    console.error('Admin user search Firestore read failed:', error.message);
+    res.status(503).json({ error: 'Service temporarily unavailable.' });
+  }
 });
 
 router.post('/loans/calculate', (req, res) => {
   const { principal, rate, term } = req.body;
-  const p = parseFloat(principal) || 0;
-  const r = parseFloat(rate) / 100 / 12;
-  const n = parseInt(term) || 0;
-
+  const p = Number(principal);
+  const annualRate = Number(rate);
+  const n = Number(term);
+  if (!Number.isFinite(p) || p <= 0 || p > 100000000 || !Number.isFinite(annualRate) || annualRate < 0 || annualRate > 100 || !Number.isInteger(n) || n < 1 || n > 600) {
+    return res.status(400).json({ error: 'Enter a valid principal, rate, and term.' });
+  }
+  const r = annualRate / 100 / 12;
   if (r === 0) {
     const emi = p / n;
     return res.json({ emi: emi.toFixed(2), total: p.toFixed(2), interest: '0.00' });
   }
-
   const emi = (p * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
   const total = emi * n;
   const interest = total - p;
-
   res.json({
     emi: emi.toFixed(2),
     total: total.toFixed(2),
@@ -131,111 +183,28 @@ router.get('/exchange/rates', (req, res) => {
 router.get('/bsb/lookup', (req, res) => {
   const bsb = req.query.bsb || '';
   const banks = {
-    '082': 'National Australia Bank (NAB)',
-    '012': 'Australia and New Zealand Banking Group (ANZ)',
-    '032': 'Australia and New Zealand Banking Group (ANZ)',
-    '062': 'Commonwealth Bank of Australia (CBA)',
-    '064': 'Commonwealth Bank of Australia (CBA)',
-    '067': 'Commonwealth Bank of Australia (CBA)',
-    '146': 'Westpac Banking Corporation',
-    '733': 'Bendigo Bank',
-    '633': 'Bendigo Bank',
-    '980': 'Bank of Melbourne',
-    '484': 'Suncorp Bank',
-    '802': 'ING Bank Australia',
-    '412': 'Bank of Queensland (BOQ)',
-    '630': 'Heritage Bank',
-    '636': 'Great Southern Bank'
+    '082': 'National Australia Bank (NAB)', '012': 'Australia and New Zealand Banking Group (ANZ)',
+    '032': 'Australia and New Zealand Banking Group (ANZ)', '062': 'Commonwealth Bank of Australia (CBA)',
+    '064': 'Commonwealth Bank of Australia (CBA)', '067': 'Commonwealth Bank of Australia (CBA)',
+    '146': 'Westpac Banking Corporation', '733': 'Bendigo Bank', '633': 'Bendigo Bank',
+    '980': 'Bank of Melbourne', '484': 'Suncorp Bank', '802': 'ING Bank Australia',
+    '412': 'Bank of Queensland (BOQ)', '630': 'Heritage Bank', '636': 'Great Southern Bank'
   };
-
   const prefix = bsb.slice(0, 3);
-  res.json({
-    bsb,
-    bank: banks[prefix] || 'Unknown Bank',
-    valid: /^\d{3}-\d{3}$/.test(bsb) || /^\d{6}$/.test(bsb)
-  });
+  res.json({ bsb, bank: banks[prefix] || 'Unknown Bank', valid: /^\d{3}-\d{3}$/.test(bsb) || /^\d{6}$/.test(bsb) });
 });
 
-router.get('/health', (req, res) => {
+router.get('/health', async (req, res) => {
+  if (process.env.NODE_ENV === 'production' && (getRuntimeEnv('WORKER_RUNTIME') === '1' || process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)) {
+    return res.status(503).json({ status: 'not_ready', reason: 'durable_store_unconfigured' });
+  }
   try {
-    db.prepare('SELECT 1').get();
+    await repo.list('users', [], { limit: 1 });
     res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
-  } catch (e) {
-    res.status(500).json({ status: 'error', message: e.message });
+  } catch (error) {
+    console.error('Health check Firestore query failed:', error.message);
+    res.status(503).json({ status: 'error' });
   }
-});
-
-router.get('/debug/firestore', async (req, res) => {
-  const diag = getFirestoreAdminDiagnostics();
-  const forceDiag = req.query.force === '1';
-  if (forceDiag) {
-    logFirestoreDiagnostics(true);
-  }
-  const testEmail = req.query.test_email
-    ? String(req.query.test_email).trim().toLowerCase()
-    : null;
-
-  const result = {
-    timestamp: new Date().toISOString(),
-    runtime: diag.runtime,
-    resolvedProjectId: getResolvedProjectId(),
-    hasAdminCredentials: hasAdminCredentials(),
-    isFirestoreEnabled: false,
-    diagnostics: diag,
-    notes: [
-      'If private_key_valid = NO, fix env var in Vercel Settings → Environment Variables → Redeploy',
-      'If isFirestoreEnabled = YES but users still not appearing, visit:',
-      '   /api/debug/firestore?backfill_missing=1 to rescue all local SQLite users',
-    ]
-  };
-
-  try {
-    result.isFirestoreEnabled = isFirestoreEnabled();
-  } catch (err) {
-    result.isFirestoreEnabled = false;
-    result.isFirestoreEnabledError = String(err.message || err);
-  }
-
-  if (testEmail) {
-    try {
-      result.testEmail = testEmail;
-      const local = db.prepare('SELECT id, email, first_name, last_name, created_at FROM users WHERE email = ?').get(testEmail);
-      result.localUserFound = Boolean(local);
-      result.localUser = local || null;
-
-      if (result.isFirestoreEnabled) {
-        result.firestoreUserExists = await firestoreUserExistsByEmail(testEmail);
-        if (local && !result.firestoreUserExists && req.query.force_sync === '1') {
-          result.forcedSyncResult = await syncUserBundleToFirestore(local.id);
-        }
-      }
-    } catch (err) {
-      result.testEmailError = String(err.message || err);
-    }
-  }
-
-  if (req.query.backfill_missing === '1') {
-    result.backfill = { started: true, message: 'Backfill triggered - check server logs for details. This endpoint does not wait for completion.' };
-    (async () => {
-      try {
-        const { backfillLocalUsersToFirestore } = require('../services/firestore-sync');
-        await backfillLocalUsersToFirestore(500);
-      } catch (e) {
-        console.error('/api/debug/firestore backfill error:', e);
-      }
-    })();
-  }
-
-  const safeForPublic = { ...result };
-  if (safeForPublic.diagnostics) {
-    safeForPublic.diagnostics = {
-      ...safeForPublic.diagnostics,
-      clientEmailValue: undefined,
-    };
-  }
-
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-  res.json(safeForPublic);
 });
 
 module.exports = router;

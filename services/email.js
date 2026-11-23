@@ -1,19 +1,13 @@
-const nodemailer = require('nodemailer');
-const { db } = require('../database');
+const { createFirestoreRepository } = require('./firestore-rest');
+const repository = createFirestoreRepository();
 
 const OUTGOING_TYPES = new Set(['local_transfer', 'international_transfer', 'withdrawal', 'bill_payment', 'loan_payment']);
 const INCOMING_TYPES = new Set(['deposit', 'loan_disbursement']);
 
-let cachedTransporter = null;
-
 function getEmailConfig() {
-  const host = process.env.BREVO_SMTP_HOST || process.env.SMTP_HOST || 'smtp-relay.brevo.com';
-  const port = Number(process.env.BREVO_SMTP_PORT || process.env.SMTP_PORT || 587);
-  const user = process.env.BREVO_SMTP_LOGIN || process.env.BREVO_SMTP_USER || process.env.SMTP_USER || process.env.BREVO_LOGIN || '';
-  const pass = process.env.BREVO_SMTP_PASSWORD || process.env.SMTP_PASS || process.env.BREVO_SMTP_KEY || '';
   const from = process.env.EMAIL_FROM || process.env.BREVO_FROM_EMAIL || process.env.SMTP_FROM || 'United Credit Bank <no-reply@unitedcreditbank.xyz>';
   const replyTo = process.env.EMAIL_REPLY_TO || process.env.BREVO_REPLY_TO || process.env.SMTP_REPLY_TO || undefined;
-  return { host, port, user, pass, from, replyTo };
+  return { from, replyTo };
 }
 
 function getBrevoApiKey() {
@@ -21,39 +15,12 @@ function getBrevoApiKey() {
 }
 
 function getEmailMode() {
-  const apiKey = getBrevoApiKey();
-  if (apiKey) {
-    return 'brevo_api';
-  }
-  const cfg = getEmailConfig();
-  if (cfg.user && cfg.pass) {
-    return 'smtp';
-  }
-  return 'none';
+  return getBrevoApiKey() ? 'brevo_api' : 'none';
 }
 
 function isEmailConfigured() {
   const cfg = getEmailConfig();
   return Boolean(cfg.from && getEmailMode() !== 'none');
-}
-
-function getTransporter() {
-  if (getEmailMode() !== 'smtp' || !isEmailConfigured()) {
-    return null;
-  }
-  if (!cachedTransporter) {
-    const cfg = getEmailConfig();
-    cachedTransporter = nodemailer.createTransport({
-      host: cfg.host,
-      port: cfg.port,
-      secure: cfg.port === 465,
-      auth: {
-        user: cfg.user,
-        pass: cfg.pass
-      }
-    });
-  }
-  return cachedTransporter;
 }
 
 function escapeHtml(value) {
@@ -172,22 +139,7 @@ async function sendEmail({ to, subject, html, text }) {
     return await sendEmailViaBrevoApi({ to, subject, html, text });
   }
 
-  const transporter = getTransporter();
-  if (!transporter) {
-    return { sent: false, skipped: true };
-  }
-
-  const cfg = getEmailConfig();
-  await transporter.sendMail({
-    from: cfg.from,
-    replyTo: cfg.replyTo,
-    to,
-    subject,
-    html,
-    text
-  });
-
-  return { sent: true };
+  return { sent: false, skipped: true };
 }
 
 function buildEmailFrame(title, bodyHtml) {
@@ -353,19 +305,19 @@ async function sendTransactionActivityEmailById(txnId, options = {}) {
     return { sent: false, skipped: true };
   }
 
-  const txn = db.prepare(`
-    SELECT
-      t.*,
-      u.first_name,
-      u.last_name,
-      u.email,
-      a.account_name,
-      a.account_number
-    FROM transactions t
-    JOIN users u ON u.id = t.user_id
-    JOIN accounts a ON a.id = t.account_id
-    WHERE t.id = ?
-  `).get(txnId);
+  const txn = await repository.get('transactions', String(txnId));
+  if (!txn) return { sent: false, skipped: true };
+  const [user, account] = await Promise.all([
+    repository.get('users', String(txn.user_id)),
+    repository.get('accounts', String(txn.account_id))
+  ]);
+  Object.assign(txn, {
+    first_name: user?.first_name || '',
+    last_name: user?.last_name || '',
+    email: user?.email || '',
+    account_name: account?.account_name || '',
+    account_number: account?.account_number || ''
+  });
 
   if (!txn || !txn.email) {
     return { sent: false, skipped: true };

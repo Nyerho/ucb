@@ -1,16 +1,15 @@
+'use strict';
+
 const express = require('express');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const crypto = require('crypto');
 const multer = require('multer');
-const { db } = require('../database');
-const {
-  requireAuth,
-  addNotification
-} = require('../middleware/auth');
+const { createFirestoreRepository } = require('../services/firestore-rest');
+const { uploadObject, downloadObject, deleteObject } = require('../services/firebase-storage');
+const { requireAuth, addNotification } = require('../middleware/auth');
 
 const router = express.Router();
-
+router.use(require('../middleware/production-pii-gate'));
+const repo = createFirestoreRepository();
 const DOCUMENT_TYPES = [
   { type: 'Drivers Licence', name: "Australian Driver's Licence", requires_both: true },
   { type: 'Passport', name: 'Australian Passport', requires_both: false },
@@ -19,147 +18,115 @@ const DOCUMENT_TYPES = [
   { type: 'Birth Certificate', name: 'Australian Birth Certificate', requires_both: false },
   { type: 'Citizenship', name: 'Citizenship Certificate', requires_both: false }
 ];
-
-const isServerlessRuntime = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
-const uploadDir = isServerlessRuntime
-  ? path.join(os.tmpdir(), 'unitedcreditbank', 'uploads', 'kyc')
-  : path.join(process.cwd(), 'public', 'uploads', 'kyc');
-
-function ensureUploadDir() {
-  fs.mkdirSync(uploadDir, { recursive: true });
-  return uploadDir;
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 3 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+    cb(allowed.has(file.mimetype) ? null : new Error('Unsupported document file type.'), allowed.has(file.mimetype));
+  }
+});
+function uid(req) { return String(req.auth?.uid || req.auth?.sub || req.session?.userId || ''); }
+function decorateRecord(record) {
+  return { ...record, id: String(record.id), user_id: String(record.user_id), submitted_at: record.submitted_at || record.created_at || null };
+}
+function storageName(owner, recordId, kind, file) {
+  const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' })[file.mimetype];
+  return `kyc/${owner}/${recordId}/${kind}-${crypto.randomUUID()}.${extension}`;
 }
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, ensureUploadDir()),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
-    const safeBase = path.basename(file.originalname || 'document', ext)
-      .replace(/[^a-z0-9_-]+/gi, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'document';
-    cb(null, `${Date.now()}-${safeBase}${ext}`);
-  }
+router.get('/', requireAuth, async (req, res) => {
+  try {
+    const rows = await repo.list('kyc', [{ field: 'user_id', value: uid(req) }], { orderBy: { field: 'submitted_at', direction: 'DESCENDING' } });
+    const kycRecords = rows.map(decorateRecord);
+    res.render('kyc/index', { title: 'Identity Verification (KYC) - United Credit Bank', page: 'kyc', kycRecords, records: kycRecords, latest: kycRecords[0] || null, documentTypes: DOCUMENT_TYPES });
+  } catch (error) { console.error('KYC listing failed:', error); res.sendStatus(503); }
 });
 
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024
-  }
-});
-
-router.get('/', requireAuth, (req, res) => {
-  const kycRecords = db.prepare(`
-    SELECT * FROM kyc
-    WHERE user_id = ?
-    ORDER BY submitted_at DESC
-  `).all(req.session.userId);
-
-  const latest = kycRecords[0] || null;
-
-  res.render('kyc/index', {
-    title: 'Identity Verification (KYC) - United Credit Bank',
-    page: 'kyc',
-    kycRecords,
-    records: kycRecords,
-    latest,
-    documentTypes: DOCUMENT_TYPES
-  });
-});
-
-router.get('/submit', requireAuth, (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.userId);
-
-  res.render('kyc/submit', {
-    title: 'Submit KYC - United Credit Bank',
-    page: 'kyc',
-    user,
-    documentTypes: DOCUMENT_TYPES
-  });
+router.get('/submit', requireAuth, async (req, res) => {
+  try {
+    const user = await repo.get('users', uid(req));
+    res.render('kyc/submit', { title: 'Submit KYC - United Credit Bank', page: 'kyc', user, documentTypes: DOCUMENT_TYPES });
+  } catch (error) { console.error('KYC form profile read failed:', error); res.sendStatus(503); }
 });
 
 router.post('/submit', requireAuth, upload.fields([
-  { name: 'document_front', maxCount: 1 },
-  { name: 'document_back', maxCount: 1 },
-  { name: 'document_selfie', maxCount: 1 }
-]), (req, res) => {
-  const { document_type, document_number, id_expiry, document_front, document_back, document_selfie } = req.body;
-  const selectedType = DOCUMENT_TYPES.find((doc) => doc.type === document_type);
+  { name: 'document_front', maxCount: 1 }, { name: 'document_back', maxCount: 1 }, { name: 'document_selfie', maxCount: 1 }
+]), async (req, res) => {
+  const owner = uid(req);
+  try {
+    const { document_type, document_number, id_expiry } = req.body;
+    const selectedType = DOCUMENT_TYPES.find((doc) => doc.type === document_type);
+    const files = req.files || {};
+    const front = files.document_front?.[0];
+    const back = files.document_back?.[0];
+    const selfie = files.document_selfie?.[0];
+    if (!selectedType) { req.session.error = 'Please choose a valid document type.'; return res.redirect('/kyc/submit'); }
+    if (!String(document_number || '').trim()) { req.session.error = 'Document number is required.'; return res.redirect('/kyc/submit'); }
+    if (!front) { req.session.error = 'Please upload the front of your document.'; return res.redirect('/kyc/submit'); }
+    if (selectedType.requires_both && !back) { req.session.error = 'Please upload the back of your document.'; return res.redirect('/kyc/submit'); }
+    const existing = await repo.list('kyc', [{ field: 'user_id', value: owner }]);
+    if (existing.some((record) => record.status === 'pending')) { req.session.error = 'You already have a pending KYC submission. Please wait for review.'; return res.redirect('/kyc'); }
+    if (existing.some((record) => record.status === 'approved')) { req.session.error = 'Your identity is already verified.'; return res.redirect('/kyc'); }
 
-  const existingPending = db.prepare('SELECT * FROM kyc WHERE user_id = ? AND status = ?').get(req.session.userId, 'pending');
-  if (existingPending) {
-    req.session.error = 'You already have a pending KYC submission. Please wait for review.';
+    const id = crypto.randomUUID();
+    const objects = [];
+    try {
+      const store = async (kind, file) => {
+        if (!file) return '';
+        const name = storageName(owner, id, kind, file);
+        await uploadObject(name, file.buffer, file.mimetype);
+        objects.push(name);
+        return name;
+      };
+      const document_front = await store('front', front);
+      const document_back = await store('back', back);
+      const document_selfie = await store('selfie', selfie);
+      const now = new Date().toISOString();
+      await repo.create('kyc', {
+        id, user_id: owner, document_type, document_number: String(document_number).trim(),
+        document_front, document_back, document_selfie, id_expiry: id_expiry || null,
+        status: 'pending', submitted_at: now, created_at: now
+      }, id);
+    } catch (error) {
+      await Promise.allSettled(objects.map(deleteObject));
+      throw error;
+    }
+    try { await addNotification(owner, 'KYC Submitted', 'Your identity verification has been submitted for review.', 'info'); } catch (error) { console.error('KYC notification failed:', error); }
+    req.session.success = 'KYC documents submitted successfully! Our team will review within 24 hours.';
     return res.redirect('/kyc');
-  }
-
-  const existingApproved = db.prepare('SELECT * FROM kyc WHERE user_id = ? AND status = ?').get(req.session.userId, 'approved');
-  if (existingApproved) {
-    req.session.error = 'Your identity is already verified.';
-    return res.redirect('/kyc');
-  }
-
-  if (!selectedType) {
-    req.session.error = 'Please choose a valid document type.';
-    return res.redirect('/kyc/submit');
-  }
-
-  if (!String(document_number || '').trim()) {
-    req.session.error = 'Document number is required.';
-    return res.redirect('/kyc/submit');
-  }
-
-  const files = req.files || {};
-  const frontFile = files.document_front && files.document_front[0];
-  const backFile = files.document_back && files.document_back[0];
-  const selfieFile = files.document_selfie && files.document_selfie[0];
-
-  if (!frontFile) {
-    req.session.error = 'Please upload the front of your document.';
-    return res.redirect('/kyc/submit');
-  }
-
-  if (selectedType.requires_both && !backFile) {
-    req.session.error = 'Please upload the back of your document.';
-    return res.redirect('/kyc/submit');
-  }
-
-  db.prepare(`
-    INSERT INTO kyc (user_id, document_type, document_number, document_front, document_back, document_selfie, id_expiry, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
-  `).run(
-    req.session.userId,
-    document_type,
-    String(document_number || '').trim(),
-    frontFile ? `uploads/kyc/${frontFile.filename}` : 'uploads/kyc/default_front.jpg',
-    backFile ? `uploads/kyc/${backFile.filename}` : '',
-    selfieFile ? `uploads/kyc/${selfieFile.filename}` : '',
-    id_expiry || null
-  );
-
-  addNotification(req.session.userId, 'KYC Submitted', 'Your identity verification has been submitted for review.', 'info');
-  req.session.success = 'KYC documents submitted successfully! Our team will review within 24 hours.';
-  res.redirect('/kyc');
+  } catch (error) { console.error('KYC submission failed:', error); return res.sendStatus(503); }
 });
 
-router.get('/:id', requireAuth, (req, res) => {
-  const kyc = db.prepare(`
-    SELECT k.*, u.first_name, u.last_name, u.email
-    FROM kyc k
-    JOIN users u ON k.user_id = u.id
-    WHERE k.id = ? AND k.user_id = ?
-  `).get(req.params.id, req.session.userId);
+router.get('/:id/document/:kind', requireAuth, async (req, res) => {
+  try {
+    const fields = { front: 'document_front', back: 'document_back', selfie: 'document_selfie' };
+    const field = fields[req.params.kind];
+    if (!field || !req.params.id) return res.sendStatus(404);
+    const record = await repo.get('kyc', String(req.params.id));
+    if (!record) return res.sendStatus(404);
+    const owner = uid(req);
+    const isAdmin = Boolean(req.user?.is_admin || req.auth?.is_admin || req.auth?.admin);
+    if (String(record.user_id) !== owner && !isAdmin) return res.sendStatus(404);
+    const objectName = String(record[field] || '');
+    if (!objectName || !objectName.startsWith(`kyc/${String(record.user_id)}/`)) return res.sendStatus(404);
+    const file = await downloadObject(objectName);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Disposition', 'attachment');
+    return res.send(Buffer.from(file.bytes));
+  } catch (error) { console.error('KYC document retrieval failed:', error); if (!res.headersSent) return res.sendStatus(503); }
+});
 
-  if (!kyc) {
-    req.session.error = 'KYC record not found.';
-    return res.redirect('/kyc');
-  }
-
-  res.render('kyc/detail', {
-    title: 'KYC Details - United Credit Bank',
-    page: 'kyc',
-    kyc
-  });
+router.get('/:id', requireAuth, async (req, res) => {
+  try {
+    const record = await repo.get('kyc', String(req.params.id));
+    if (!record || String(record.user_id) !== uid(req)) { req.session.error = 'KYC record not found.'; return res.redirect('/kyc'); }
+    const user = await repo.get('users', String(record.user_id));
+    const kyc = decorateRecord({ ...record, first_name: user?.first_name || '', last_name: user?.last_name || '', email: user?.email || '' });
+    return res.render('kyc/detail', { title: 'KYC Details - United Credit Bank', page: 'kyc', kyc });
+  } catch (error) { console.error('KYC detail read failed:', error); return res.sendStatus(503); }
 });
 
 module.exports = router;

@@ -1,55 +1,76 @@
+'use strict';
+
 const express = require('express');
-const { db } = require('../database');
-const { requireAuth, requireVerified, getUserAccounts, getAccountStatusMessage, generateAccountNumber } = require('../middleware/auth');
-
+const crypto = require('node:crypto');
+const { createFirestoreRepository } = require('../services/firestore-rest');
+const { toMinorUnits, fromMinorUnits } = require('../services/money');
+const { requireAuth, requireVerified, getAccountStatusMessage, generateAccountNumber } = require('../middleware/auth');
 const router = express.Router();
+const repo = createFirestoreRepository();
+router.use(require('../middleware/production-financial-gate'));
 
-router.get('/', requireAuth, (req, res) => {
-  const accounts = getUserAccounts(req.session.userId);
-  res.render('accounts/index', {
-    title: 'My Accounts - United Credit Bank',
-    page: 'accounts',
-    accounts
-  });
+function accountForView(account) {
+  if (!account) return account;
+  return {
+    ...account,
+    balance: fromMinorUnits(Number(account.balance_minor || 0)),
+    available_balance: fromMinorUnits(Number(account.available_balance_minor ?? account.balance_minor ?? 0))
+  };
+}
+
+function transactionForView(transaction) {
+  return {
+    ...transaction,
+    amount: fromMinorUnits(Number(transaction.amount_minor || 0)),
+    fee: fromMinorUnits(Number(transaction.fee_minor || 0))
+  };
+}
+
+function routeError(req, res, error, fallback) {
+  console.error('Account route Firestore operation failed:', error && error.message);
+  req.session.error = fallback;
+  return res.redirect('/accounts');
+}
+
+router.get('/', requireAuth, async (req, res) => {
+  try {
+    const docs = await repo.list('accounts', [{ field: 'user_id', op: 'EQUAL', value: String(req.auth.uid) }], {
+      orderBy: { field: 'created_at', direction: 'ASCENDING' }, limit: 100
+    });
+    const accounts = docs.map(accountForView);
+    res.render('accounts/index', { title: 'My Accounts - United Credit Bank', page: 'accounts', accounts });
+  } catch (error) {
+    return routeError(req, res, error, 'Accounts are temporarily unavailable. Please try again.');
+  }
 });
 
-router.get('/:id', requireAuth, (req, res) => {
-  const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(req.params.id, req.session.userId);
-  if (!account) {
-    req.session.error = 'Account not found.';
-    return res.redirect('/accounts');
+router.get('/:id', requireAuth, async (req, res) => {
+  try {
+    const [rawAccount, rawTransactions] = await Promise.all([
+      repo.get('accounts', String(req.params.id)),
+      repo.list('transactions', [
+        { field: 'user_id', op: 'EQUAL', value: String(req.auth.uid) },
+        { field: 'account_id', op: 'EQUAL', value: String(req.params.id) }
+      ], { orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit: 500 })
+    ]);
+    if (!rawAccount || String(rawAccount.user_id) !== String(req.auth.uid)) {
+      req.session.error = 'Account not found.';
+      return res.redirect('/accounts');
+    }
+    const account = accountForView(rawAccount);
+    const transactions = rawTransactions.map(transactionForView);
+    const totalDeposits = transactions.filter((t) => t.status === 'completed' &&
+      (t.transaction_type === 'admin_adjustment' ? t.amount > 0 : ['deposit', 'loan_disbursement'].includes(t.transaction_type)))
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    const totalWithdrawals = transactions.filter((t) => t.status === 'completed' &&
+      (t.transaction_type === 'admin_adjustment' ? t.amount < 0 : ['withdrawal', 'local_transfer', 'international_transfer', 'bill_payment', 'loan_payment'].includes(t.transaction_type)))
+      .reduce((sum, t) => sum + Math.abs(t.amount) + Math.abs(t.fee), 0);
+    res.render('accounts/detail', {
+      title: `${account.account_name} - United Credit Bank`, page: 'accounts', account, transactions, totalDeposits, totalWithdrawals
+    });
+  } catch (error) {
+    return routeError(req, res, error, 'Account details are temporarily unavailable. Please try again.');
   }
-
-  const transactions = db.prepare(`
-    SELECT * FROM transactions
-    WHERE account_id = ?
-    ORDER BY created_at DESC
-    LIMIT 500
-  `).all(account.id);
-
-  const totalDeposits = transactions
-    .filter((t) => {
-      if (t.status !== 'completed') return false;
-      if (t.transaction_type === 'admin_adjustment') return parseFloat(t.amount) > 0;
-      return ['deposit', 'loan_disbursement'].includes(t.transaction_type);
-    })
-    .reduce((sum, t) => sum + Math.abs(parseFloat(t.amount) || 0), 0);
-  const totalWithdrawals = transactions
-    .filter((t) => {
-      if (t.status !== 'completed') return false;
-      if (t.transaction_type === 'admin_adjustment') return parseFloat(t.amount) < 0;
-      return ['withdrawal', 'local_transfer', 'international_transfer', 'bill_payment', 'loan_payment'].includes(t.transaction_type);
-    })
-    .reduce((sum, t) => sum + Math.abs(parseFloat(t.amount) || 0) + Math.abs(parseFloat(t.fee) || 0), 0);
-
-  res.render('accounts/detail', {
-    title: `${account.account_name} - United Credit Bank`,
-    page: 'accounts',
-    account,
-    transactions,
-    totalDeposits,
-    totalWithdrawals
-  });
 });
 
 router.get('/open/new', requireAuth, requireVerified, (req, res) => {
@@ -60,57 +81,86 @@ router.get('/open/new', requireAuth, requireVerified, (req, res) => {
     { type: 'Business', name: 'Business Account', min: 500, interest: '1.20%', desc: 'Complete business banking solution' },
     { type: 'International', name: 'Multi-Currency Account', min: 100, interest: '0.30%', desc: 'Hold and manage multiple currencies' }
   ];
-  res.render('accounts/open', {
-    title: 'Open New Account - United Credit Bank',
-    page: 'accounts',
-    accountTypes
-  });
+  res.render('accounts/open', { title: 'Open New Account - United Credit Bank', page: 'accounts', accountTypes });
 });
 
-router.post('/open', requireAuth, requireVerified, (req, res) => {
+router.post('/open', requireAuth, requireVerified, async (req, res) => {
   const { account_type, initial_deposit } = req.body;
-  const accountNumber = generateAccountNumber();
-  const user = db.prepare('SELECT first_name, last_name FROM users WHERE id = ?').get(req.session.userId);
-
-  const insertAccount = db.prepare(`
-    INSERT INTO accounts (user_id, account_number, account_type, account_name, balance, available_balance, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  insertAccount.run(
-    req.session.userId,
-    accountNumber,
-    account_type,
-    `${user.first_name} ${user.last_name}`,
-    initial_deposit || 0,
-    initial_deposit || 0,
-    'active'
-  );
-
-  req.session.success = `Your ${account_type} account has been opened successfully!`;
-  res.redirect('/accounts');
+  let initialMinor;
+  try {
+    initialMinor = toMinorUnits(initial_deposit || '0');
+    if (initialMinor < 0) throw new TypeError('Initial deposit cannot be negative.');
+  } catch (_) {
+    req.session.error = 'Enter a valid non-negative initial deposit.';
+    return res.redirect('/accounts/open/new');
+  }
+  const uid = String(req.auth.uid);
+  const accountId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  try {
+    const user = req.user;
+    if (!user || String(user.id || user.uid || uid) !== uid) throw new Error('Verified user profile unavailable.');
+    const name = `${user.first_name || ''} ${user.last_name || ''}`.trim();
+    if (!name) throw new Error('Account holder name unavailable.');
+    await repo.runTransaction(async (tx) => {
+      const account = {
+        user_id: uid, account_number: generateAccountNumber(), account_type: String(account_type || ''),
+        account_name: name, balance_minor: initialMinor, available_balance_minor: initialMinor,
+        status: 'active', created_at: now, updated_at: now
+      };
+      tx.create('accounts', accountId, account);
+      if (initialMinor > 0) {
+        tx.create('transactions', crypto.randomUUID(), {
+          user_id: uid, account_id: accountId, transaction_type: 'deposit', amount_minor: initialMinor,
+          fee_minor: 0, status: 'completed', description: 'Initial account deposit', created_at: now
+        });
+      }
+      tx.create('ledger_entries', crypto.randomUUID(), {
+        user_id: uid, account_id: accountId, entry_type: 'account_opening', amount_minor: initialMinor,
+        balance_after_minor: initialMinor, currency: 'AUD', reference_id: accountId, created_at: now
+      });
+    });
+    req.session.success = `Your ${account_type} account has been opened successfully!`;
+    return res.redirect('/accounts');
+  } catch (error) {
+    return routeError(req, res, error, 'Account opening is temporarily unavailable. Please try again.');
+  }
 });
 
-router.post('/:id/close', requireAuth, requireVerified, (req, res) => {
-  const account = db.prepare('SELECT * FROM accounts WHERE id = ? AND user_id = ?').get(req.params.id, req.session.userId);
-  if (!account) {
-    req.session.error = 'Account not found.';
+router.post('/:id/close', requireAuth, requireVerified, async (req, res) => {
+  const uid = String(req.auth.uid);
+  try {
+    const account = await repo.get('accounts', String(req.params.id));
+    if (!account || String(account.user_id) !== uid) {
+      req.session.error = 'Account not found.';
+      return res.redirect('/accounts');
+    }
+    const restrictionMessage = getAccountStatusMessage(account, 'be closed');
+    if (restrictionMessage) {
+      req.session.error = restrictionMessage;
+      return res.redirect(`/accounts/${req.params.id}`);
+    }
+    if (Number(account.balance_minor || 0) > 0) {
+      req.session.error = 'Please transfer remaining balance before closing.';
+      return res.redirect(`/accounts/${req.params.id}`);
+    }
+    await repo.runTransaction(async (tx) => {
+      const current = await tx.get('accounts', String(req.params.id));
+      if (!current || String(current.user_id) !== uid || Number(current.balance_minor || 0) !== 0 || current.status !== account.status) {
+        throw new Error('Account changed before closure; retry the request.');
+      }
+      const now = new Date().toISOString();
+      tx.update('accounts', String(req.params.id), { status: 'closed', updated_at: now });
+      tx.create('ledger_entries', crypto.randomUUID(), {
+        user_id: uid, account_id: String(req.params.id), entry_type: 'account_closed', amount_minor: 0,
+        balance_after_minor: 0, currency: 'AUD', reference_id: String(req.params.id), created_at: now
+      });
+    });
+    req.session.success = 'Account closed successfully.';
     return res.redirect('/accounts');
+  } catch (error) {
+    return routeError(req, res, error, 'Account closure is temporarily unavailable. Please try again.');
   }
-
-  const restrictionMessage = getAccountStatusMessage(account, 'be closed');
-  if (restrictionMessage) {
-    req.session.error = restrictionMessage;
-    return res.redirect(`/accounts/${req.params.id}`);
-  }
-
-  if (parseFloat(account.balance) > 0) {
-    req.session.error = 'Please transfer remaining balance before closing.';
-    return res.redirect(`/accounts/${req.params.id}`);
-  }
-
-  db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('closed', req.params.id);
-  req.session.success = 'Account closed successfully.';
-  res.redirect('/accounts');
 });
 
 module.exports = router;

@@ -1,0 +1,18 @@
+name = "ucb-firebase-preview"
+main = "worker.mjs"
+compatibility_date = "2026-11-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = false
+
+[vars]
+NODE_ENV = "production"
+WORKER_RUNTIME = "1"
+
+# Never add secrets here. Configure these using Wrangler's secret manager:
+# FIREBASE_PROJECT_ID, FIREBASE_API_KEY, FIREBASE_CLIENT_EMAIL,
+# FIREBASE_PRIVATE_KEY, FIREBASE_STORAGE_BUCKET, SESSION_ENCRYPTION_KEY.

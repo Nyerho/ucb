@@ -1,12 +1,14 @@
-// Keep browser mutations disabled until Firebase rules and production workflows pass review.
+// Keep customer/browser mutations disabled; explicitly allowlisted admin routes enforce
+// verified admin identity, encrypted sessions, transaction validation, ledger writes, and audit.
 const { getRuntimeEnv } = require('../lib/runtime-env');
+const { getRequestPath, isSafeAdminMutation } = require('../lib/admin-safe-write-allowlist');
 
 module.exports = function serverlessPersistenceGate(req, res, next) {
   const isServerless = Boolean(getRuntimeEnv('WORKER_RUNTIME') === '1' || process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
   const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
-  const requestPath = String(req.path || '').replace(/\/+$/, '') || '/';
+  const requestPath = getRequestPath(req);
   const isLoginSubmission = req.method === 'POST' && requestPath === '/auth/login';
-  if (process.env.NODE_ENV === 'production' && isServerless && isMutation && !isLoginSubmission) {
+  if (process.env.NODE_ENV === 'production' && isServerless && isMutation && !isLoginSubmission && !isSafeAdminMutation(req)) {
     res.setHeader('Cache-Control', 'no-store');
     return res.status(503).json({
       error: 'Writes are temporarily disabled until Firebase security and production workflow gates are approved.'

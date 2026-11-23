@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { createFirestoreRepository } = require('../services/firestore-rest');
 const { uploadObject, downloadObject, deleteObject } = require('../services/firebase-storage');
-const { requireAuth, addNotification } = require('../middleware/auth');
+const { requireAuth, isAdminUser, addNotification } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(require('../middleware/production-pii-gate'));
@@ -106,7 +106,7 @@ router.get('/:id/document/:kind', requireAuth, async (req, res) => {
     const record = await repo.get('kyc', String(req.params.id));
     if (!record) return res.sendStatus(404);
     const owner = uid(req);
-    const isAdmin = Boolean(req.user?.is_admin || req.auth?.is_admin || req.auth?.admin);
+    const isAdmin = isAdminUser(req.user);
     if (String(record.user_id) !== owner && !isAdmin) return res.sendStatus(404);
     const objectName = String(record[field] || '');
     if (!objectName || !objectName.startsWith(`kyc/${String(record.user_id)}/`)) return res.sendStatus(404);

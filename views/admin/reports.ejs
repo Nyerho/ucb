@@ -1,6 +1,7 @@
 <%- include('../partials/layouts/admin-start') -%>
 
 <h2 style="margin-bottom:16px;">📊 Reports & Analytics</h2>
+<div class="alert alert-info" style="margin-bottom:20px;"><span class="alert-icon">i</span><div class="alert-content"><div class="alert-title">Real Firestore data · bounded report window</div><p class="alert-message" style="margin:0;">This page uses the latest up to 1,000 documents per collection. If a collection exceeds that window, these summaries are partial and should not be treated as a complete financial statement. No projected or synthetic trend figures are shown.</p></div></div>
 
 <div class="stat-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px;">
   <div class="stat-card">
@@ -8,21 +9,21 @@
       <div><div class="stat-label">30-day Revenue</div>
       <div class="stat-value"><%= currency(revenue) %></div></div>
       <div class="stat-icon stat-icon-primary">📈</div>
-    </div><div class="stat-change up">+12.4% MoM</div>
+    </div><div class="stat-change">Completed transaction fees in the latest 30 days</div>
   </div>
   <div class="stat-card">
     <div class="stat-header"><div>
       <div class="stat-label">New Signups (30d)</div>
       <div class="stat-value"><%= (monthlyData.reduce((s,m)=>s+m.new_customers,0)).toLocaleString() %></div></div>
       <div class="stat-icon stat-icon-success">👥</div>
-    </div><div class="stat-change up">+8.1% vs prior</div>
+    </div><div class="stat-change">Recorded customer profiles in the latest 12 months</div>
   </div>
   <div class="stat-card">
     <div class="stat-header"><div>
       <div class="stat-label">Deposits (30d)</div>
-      <div class="stat-value"><%= currency(monthlyData.reduce((s,m)=>s+m.deposits,0)) %></div></div>
+      <div class="stat-value"><%= currency(deposits30d) %></div></div>
       <div class="stat-icon stat-icon-success">⬇️</div>
-    </div><div class="stat-change up">+15.7% MoM</div>
+    </div><div class="stat-change">Completed deposits in the latest 30 days</div>
   </div>
   <div class="stat-card">
     <div class="stat-header"><div>
@@ -119,5 +120,4 @@
 </div>
 
 <%- include('../partials/layouts/admin-end') -%>
-
 

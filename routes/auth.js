@@ -5,6 +5,7 @@ const { requireAuth } = require('../middleware/auth');
 const { createFirestoreRepository } = require('../services/firestore-rest');
 const firebaseAuth = require('../services/firebase-auth-rest');
 const { sendAccountWelcomeEmail, sendLoginWelcomeEmail } = require('../services/email');
+const requireSessionEncryptionReady = require('../middleware/session-encryption-ready');
 const router = express.Router();
 const repo = createFirestoreRepository();
 const nowIso = () => new Date().toISOString();
@@ -65,7 +66,7 @@ router.get('/login', (req, res) => {
   if (req.session.userId) return res.redirect(Number(req.session.user?.is_admin) === 1 ? '/admin/dashboard' : '/user/dashboard');
   res.render('auth/login', { title: 'Login - United Credit Bank', page: 'login' });
 });
-router.post('/login', async (req, res) => {
+router.post('/login', requireSessionEncryptionReady, async (req, res) => {
   const email = clean(req.body.email).toLowerCase(), password = String(req.body.password || '');
   if (!email || !password) { req.session.error = 'Email and password are required.'; return res.redirect('/auth/login'); }
   try {

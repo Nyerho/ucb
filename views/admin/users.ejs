@@ -3,9 +3,9 @@
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
   <div>
     <h2 style="margin:0;">👥 Manage Customers</h2>
-    <p style="margin:4px 0 0;color:var(--text-gray);">Full customer CRUD — view, edit, freeze, delete, and reset passwords.</p>
+    <p style="margin:4px 0 0;color:var(--text-gray);">Customer records use Firebase identities and Firestore data. Profile, access, account-opening, and financial correction actions are reasoned and audited on the detail pages.</p>
   </div>
-  <a href="/admin/users/create" class="btn btn-primary btn-lg">➕ Create New User</a>
+  <a href="/admin/users/create" class="btn btn-primary">Create customer</a>
 </div>
 
 <div class="card" style="margin-bottom:20px;">
@@ -83,9 +83,6 @@
             <td onclick="event.stopPropagation();">
               <div style="display:flex;gap:4px;flex-wrap:wrap;">
                 <a href="/admin/users/<%= u.id %>" class="btn btn-light btn-sm">View</a>
-                <% if (!u.is_admin) { %>
-                  <a href="/admin/users/<%= u.id %>/freeze" class="btn btn-warning btn-sm"><%= u.is_frozen ? '🔥 Unfreeze' : '❄️ Freeze' %></a>
-                <% } %>
               </div>
             </td>
           </tr>
@@ -96,5 +93,3 @@
 </div>
 
 <%- include('../partials/layouts/admin-end') -%>
-
-

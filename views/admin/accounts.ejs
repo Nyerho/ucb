@@ -3,9 +3,8 @@
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
   <div>
     <h2 style="margin:0;">🏦 Manage Accounts</h2>
-    <p style="margin:4px 0 0;color:var(--text-gray);">All customer accounts — status, balance, interest rates.</p>
+    <p style="margin:4px 0 0;color:var(--text-gray);">Account balances and terms are read-only. Audited account status and display-metadata controls are on each account detail page.</p>
   </div>
-  <button class="btn btn-outline btn-sm" onclick="document.getElementById('adjModal').classList.add('active')">💰 Balance Adjustment</button>
 </div>
 
 <div class="card" style="margin-bottom:20px;">
@@ -50,17 +49,7 @@
               <div style="font-size:0.72rem;color:var(--text-light);">Avail <%= currency(a.available_balance) %></div></td>
             <td style="font-weight:700;color:var(--primary);"><%= parseFloat(a.interest_rate).toFixed(2) %>%</td>
             <td><span class="status-badge status-<%= a.status %>"><%= a.status %></span></td>
-            <td style="white-space:nowrap;">
-              <a href="/admin/accounts/<%= a.id %>" class="btn btn-light btn-sm">View</a>
-              <form method="POST" action="/admin/accounts/<%= a.id %>/status" style="display:inline;">
-                <select name="status" onchange="this.form.submit()" class="form-select" style="padding:4px 8px;font-size:0.78rem;">
-                  <option value="active" <%= a.status === 'active' ? 'selected' : '' %>>active</option>
-                  <option value="frozen" <%= a.status === 'frozen' ? 'selected' : '' %>>frozen</option>
-                  <option value="blocked" <%= a.status === 'blocked' ? 'selected' : '' %>>blocked</option>
-                  <option value="closed" <%= a.status === 'closed' ? 'selected' : '' %>>closed</option>
-                </select>
-              </form>
-            </td>
+            <td style="white-space:nowrap;"><a href="/admin/accounts/<%= a.id %>" class="btn btn-light btn-sm">View details</a></td>
           </tr>
         <% }) %>
       </tbody>
@@ -68,28 +57,4 @@
   </div>
 </div>
 
-<div class="modal" id="adjModal"><div class="modal-dialog" style="max-width:480px;">
-  <div class="modal-header"><h3 class="modal-title">💰 Balance Adjustment</h3>
-    <button class="modal-close" onclick="document.getElementById('adjModal').classList.remove('active')">✕</button></div>
-  <form method="POST" action="/admin/accounts/adjust">
-    <div class="modal-body">
-      <div class="form-group"><label class="form-label">Account *</label>
-        <select name="account_id" required class="form-select">
-          <% accounts.forEach(a => { %><option value="<%= a.id %>">#<%= a.id %> • <%= a.account_type %> • <%= a.user_name || 'U'+a.user_id %> • <%= currency(a.balance) %></option><% }) %>
-        </select>
-      </div>
-      <div class="form-group"><label class="form-label">Adjustment *</label>
-        <select name="type" class="form-select"><option value="credit">➕ Credit (Add funds)</option><option value="debit">➖ Debit (Remove funds)</option></select>
-      </div>
-      <div class="form-group"><label class="form-label">Amount *</label><input type="number" step="0.01" name="amount" required class="form-input" placeholder="0.00"></div>
-      <div class="form-group"><label class="form-label">Reason / Notes</label><input type="text" name="notes" class="form-input" placeholder="e.g. Correction, bonus, fee refund"></div>
-    </div>
-    <div class="modal-footer">
-      <button type="button" class="btn btn-light" onclick="document.getElementById('adjModal').classList.remove('active')">Cancel</button>
-      <button type="submit" class="btn btn-primary">✅ Apply</button>
-    </div>
-  </form>
-</div></div>
-
 <%- include('../partials/layouts/admin-end') -%>
-

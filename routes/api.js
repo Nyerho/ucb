@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const { createFirestoreRepository } = require('../services/firestore-rest');
-const { fromMinorUnits } = require('../services/money');
+const { readMinorUnits, fromMinorUnits } = require('../services/money');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { getRuntimeEnv } = require('../lib/runtime-env');
 
@@ -10,9 +10,8 @@ const repo = createFirestoreRepository();
 
 function displayMoney(document, field) {
   const minorField = `${field}_minor`;
-  const minor = document[minorField];
-  if (!Number.isSafeInteger(minor)) return 0;
-  return fromMinorUnits(minor);
+  const fallback = field === 'available_balance' ? readMinorUnits(document, 'balance_minor', 'balance') : 0;
+  return fromMinorUnits(readMinorUnits(document, minorField, field, fallback));
 }
 
 function withAccountDisplay(account) {
@@ -40,7 +39,7 @@ router.get('/user/dashboard-stats', requireAuth, async (req, res) => {
       if (!Number.isFinite(createdAt) || createdAt < cutoff) continue;
       const type = transaction.transaction_type;
       if (!type) continue;
-      const amount = Number.isSafeInteger(transaction.amount_minor) ? fromMinorUnits(transaction.amount_minor) : 0;
+      const amount = fromMinorUnits(readMinorUnits(transaction, 'amount_minor', 'amount'));
       totals.set(type, (totals.get(type) || 0) + amount);
     }
     res.json({

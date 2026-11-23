@@ -1,182 +1,75 @@
 <%- include('../partials/layouts/admin-start') -%>
 
+<%
+  const pendingTotal = pendingKYC.length + pendingTransfers.length + pendingCards.length + pendingLoans.length + pendingBills.length;
+  const queues = [
+    { key: 'kyc', title: 'KYC review', records: pendingKYC },
+    { key: 'transfers', title: 'Pending transfers, deposits, and withdrawals', records: pendingTransfers },
+    { key: 'cards', title: 'Card applications', records: pendingCards },
+    { key: 'loans', title: 'Loan applications', records: pendingLoans },
+    { key: 'bills', title: 'Bill payments', records: pendingBills }
+  ];
+%>
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
-  <div>
-    <h2 style="margin:0;">⏳ Approvals Hub</h2>
-    <p style="margin:4px 0 0;color:var(--text-gray);">Review and manage KYC, transfers, cards, loans, and bill payment approvals.</p>
-  </div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;">
-    <span class="status-badge status-pending" style="padding:8px 14px;font-size:0.85rem;">⚡ <%= pendingKYC.length + pendingTransfers.length + pendingCards.length + pendingLoans.length + pendingBills.length %> Pending</span>
-  </div>
+  <div><h2 style="margin:0;">Pending workflows</h2><p style="margin:4px 0 0;color:var(--text-gray);">Review real Firestore records. Every decision requires an administrator reason and is written with its audit event in a Firestore transaction.</p></div>
+  <span class="status-badge status-pending" style="padding:8px 14px;font-size:0.85rem;"><%= pendingTotal %> pending</span>
 </div>
+<div class="alert alert-warning" style="margin-bottom:20px;"><span class="alert-icon">!</span><div class="alert-content"><div class="alert-title">Manual settlement and provider boundary</div>
+  <p class="alert-message" style="margin:0;">Approval records an administrative decision; it does not call a bank, biller, card issuer, or lender. For transfers, bills, deposits, withdrawals, and loan disbursements, enter the already-verified external settlement/funding reference. Card approvals remain marked for manual issuer fulfillment. Open the actual Firebase Storage files before approving KYC.</p></div></div>
 
-<div class="card">
-  <div style="display:flex;border-bottom:1px solid var(--border);gap:2px;overflow-x:auto;padding:0 4px;">
-    <a href="#all" class="app-tab active" style="padding:16px 20px;font-weight:700;border-bottom:3px solid var(--primary);color:var(--primary);white-space:nowrap;">
-      📋 All (<%= pendingKYC.length + pendingTransfers.length + pendingCards.length + pendingLoans.length + pendingBills.length %>)
-    </a>
-    <a href="#kyc" class="app-tab" style="padding:16px 20px;font-weight:600;color:var(--text-gray);border-bottom:3px solid transparent;white-space:nowrap;">
-      🆔 KYC (<%= pendingKYC.length %>)
-    </a>
-    <a href="#transfers" class="app-tab" style="padding:16px 20px;font-weight:600;color:var(--text-gray);border-bottom:3px solid transparent;white-space:nowrap;">
-      💸 Transfers (<%= pendingTransfers.length %>)
-    </a>
-    <a href="#cards" class="app-tab" style="padding:16px 20px;font-weight:600;color:var(--text-gray);border-bottom:3px solid transparent;white-space:nowrap;">
-      💳 Cards (<%= pendingCards.length %>)
-    </a>
-    <a href="#loans" class="app-tab" style="padding:16px 20px;font-weight:600;color:var(--text-gray);border-bottom:3px solid transparent;white-space:nowrap;">
-      🏦 Loans (<%= pendingLoans.length %>)
-    </a>
-    <a href="#bills" class="app-tab" style="padding:16px 20px;font-weight:600;color:var(--text-gray);border-bottom:3px solid transparent;white-space:nowrap;">
-      📄 Bills (<%= pendingBills.length %>)
-    </a>
-  </div>
-
-  <div class="card-body" style="padding:24px;">
-
-    <section id="sec-kyc" class="app-section" style="margin-bottom:30px;">
-      <h3 style="margin-bottom:14px;">🆔 KYC Verifications — <%= pendingKYC.length %> pending</h3>
-      <% if (pendingKYC.length === 0) { %><div class="empty-state" style="padding:28px;">✅ No pending KYC. Great work!</div><% } %>
-      <div style="display:grid;gap:10px;">
-        <% pendingKYC.forEach(k => { %>
-          <div style="border:1.5px solid var(--border);border-radius:var(--radius-lg);padding:16px 20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
-            <div class="user-avatar" style="width:44px;height:44px;font-size:0.9rem;"><%= (k.first_name||k.user_name||'?').charAt(0) %></div>
-            <div style="flex:1;min-width:200px;">
-              <div style="font-weight:700;"><%= k.user_name || ('User #' + k.user_id) %> — <span style="color:var(--primary);"><%= k.document_type %></span></div>
-              <div style="font-size:0.82rem;color:var(--text-gray);margin-top:2px;">
-                📄 <strong><%= k.document_number %></strong> • Exp: <%= moment(k.expiry_date).format('DD MMM YYYY') %> • Submitted <%= moment(k.created_at).fromNow() %>
-              </div>
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <a href="/kyc/<%= k.id %>" target="_blank" class="btn btn-light btn-sm">👁️ View</a>
-              <form method="POST" action="/admin/approvals/kyc/<%= k.id %>" onsubmit="return confirm('Approve this KYC verification?');" style="display:inline;">
-                <button class="btn btn-success btn-sm">✅ Approve</button>
-              </form>
-              <form method="POST" action="/admin/approvals/kyc/<%= k.id %>/reject" onsubmit="return confirm('Reject this KYC? User will be notified.');" style="display:inline;">
-                <button class="btn btn-danger btn-sm">❌ Reject</button>
-              </form>
-            </div>
+<% queues.forEach(queue => { %>
+  <section class="card" style="margin-bottom:20px;">
+    <div class="card-header"><h3 class="card-title"><%= queue.title %> · <%= queue.records.length %></h3><% if (section === queue.key) { %><a href="/admin/approvals">Show all</a><% } else { %><a href="/admin/approvals?section=<%= queue.key %>">Filter</a><% } %></div>
+    <div class="card-body" style="padding:0;">
+      <% if (!queue.records.length) { %><div class="empty-state" style="padding:24px;">No pending records.</div><% } %>
+      <% queue.records.forEach(record => { const amount = Number(record.amount ?? record.principal_amount ?? record.loan_amount ?? 0); const loanAccounts = record.customer_accounts || []; const needsLoanAccount = queue.key === 'loans' && !record.account_id; const settlementRequired = ['transfers','bills','loans'].includes(queue.key); %>
+        <div style="padding:18px 20px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:minmax(190px,1fr) minmax(240px,1.3fr) minmax(300px,1.5fr);gap:18px;align-items:start;">
+          <div>
+            <strong><%= record.user_name || (`User #${record.user_id || 'unknown'}`) %></strong>
+            <div style="font-size:0.8rem;color:var(--text-light);">UID <%= record.user_id || '—' %></div>
+            <div style="font-size:0.8rem;color:var(--text-light);">Record #<%= record.id %> · <%= record.status || 'pending' %></div>
+            <% if (record.account_number) { %><div style="font-size:0.8rem;color:var(--text-light);">Account <%= record.account_number %> · <%= record.account_name || '' %></div><% } %>
           </div>
-        <% }) %>
-      </div>
-    </section>
-
-    <section id="sec-transfers" class="app-section" style="margin-bottom:30px;">
-      <h3 style="margin-bottom:14px;">💸 Transfers / Deposits / Withdrawals — <%= pendingTransfers.length %> pending</h3>
-      <% if (pendingTransfers.length === 0) { %><div class="empty-state" style="padding:28px;">✅ No pending transfers.</div><% } %>
-      <div class="table-wrap"><table class="table"><thead><tr><th>Customer</th><th>Type</th><th style="text-align:right;">Amount</th><th>Description</th><th>Requested</th><th>Actions</th></tr></thead>
-      <tbody><% pendingTransfers.forEach(tx => { %>
-        <tr>
-          <td><div style="font-weight:600;font-size:0.9rem;"><%= tx.user_name || 'User #' + tx.user_id %></div>
-            <div style="font-size:0.75rem;color:var(--text-light);">ID: <%= tx.user_id %></div></td>
-          <td><span style="font-size:0.85rem;"><%= tx.transaction_type.includes('international')?'🌍':tx.transaction_type.includes('local')?'🇦🇺':tx.transaction_type==='deposit'?'⬇️':tx.transaction_type==='withdrawal'?'⬆️':'💸' %></span>
-            <span class="tag"><%= tx.transaction_type.replace(/_/g,' ') %></span></td>
-          <td style="text-align:right;"><div style="font-weight:800;color:var(--danger);"><%= currency(Math.abs(tx.amount)) %></div>
-            <% if (parseFloat(tx.fee)>0) { %><div style="font-size:0.72rem;color:var(--text-light);">Fee <%= currency(tx.fee) %></div><% } %></td>
-          <td><div style="font-weight:600;font-size:0.88rem;"><%= tx.recipient_name || tx.description || '—' %></div>
-            <div style="font-size:0.75rem;color:var(--text-light);">Ref: <%= tx.reference || '—' %></div></td>
-          <td style="font-size:0.82rem;"><%= moment(tx.created_at).fromNow() %></td>
-          <td style="white-space:nowrap;">
-            <a href="/transfers/<%= tx.id %>" target="_blank" class="btn btn-light btn-sm">View</a>
-            <form method="POST" action="/admin/approvals/transfers/<%= tx.id %>" style="display:inline;" onsubmit="return confirm('Approve transfer #<%= tx.id %>?');">
-              <button class="btn btn-success btn-sm">✅</button>
-            </form>
-            <form method="POST" action="/admin/approvals/transfers/<%= tx.id %>/reject" style="display:inline;" onsubmit="return confirm('Reject this transfer?');">
-              <button class="btn btn-danger btn-sm">❌</button>
-            </form>
-          </td>
-        </tr>
-      <% }) %></tbody></table></div>
-    </section>
-
-    <section id="sec-cards" class="app-section" style="margin-bottom:30px;">
-      <h3 style="margin-bottom:14px;">💳 Card Applications — <%= pendingCards.length %> pending</h3>
-      <% if (pendingCards.length === 0) { %><div class="empty-state" style="padding:28px;">✅ No pending card applications.</div><% } %>
-      <div class="table-wrap"><table class="table"><thead><tr><th>Customer</th><th>Card Type</th><th>Credit Limit</th><th>Requested</th><th>Actions</th></tr></thead>
-      <tbody><% pendingCards.forEach(c => { %>
-        <tr>
-          <td><div style="font-weight:600;font-size:0.9rem;"><%= c.user_name || 'User #' + c.user_id %></div>
-            <div style="font-size:0.75rem;color:var(--text-light);"><%= c.income ? 'Income: $' + c.income.toLocaleString() : '' %></div></td>
-          <td><strong><%= c.card_type %></strong><div style="font-size:0.75rem;color:var(--text-light);">Name: <%= c.cardholder_name %></div></td>
-          <td style="font-weight:700;"><%= currency(c.credit_limit || 5000) %></td>
-          <td style="font-size:0.82rem;"><%= moment(c.applied_at || c.created_at).fromNow() %></td>
-          <td>
-            <a href="/cards/<%= c.id %>" target="_blank" class="btn btn-light btn-sm">View</a>
-            <form method="POST" action="/admin/approvals/cards/<%= c.id %>" style="display:inline;" onsubmit="return confirm('Approve card #<%= c.id %>? Card will be issued instantly.');">
-              <button class="btn btn-success btn-sm">✅ Approve</button>
-            </form>
-            <form method="POST" action="/admin/approvals/cards/<%= c.id %>/reject" style="display:inline;" onsubmit="return confirm('Reject this card application?');">
-              <button class="btn btn-danger btn-sm">❌ Reject</button>
-            </form>
-          </td>
-        </tr>
-      <% }) %></tbody></table></div>
-    </section>
-
-    <section id="sec-loans" class="app-section" style="margin-bottom:30px;">
-      <h3 style="margin-bottom:14px;">🏦 Loan Applications — <%= pendingLoans.length %> pending</h3>
-      <% if (pendingLoans.length === 0) { %><div class="empty-state" style="padding:28px;">✅ No pending loan applications.</div><% } %>
-      <div class="table-wrap"><table class="table"><thead><tr><th>Customer</th><th>Type</th><th style="text-align:right;">Amount</th><th>Term • Rate</th><th>Income</th><th>Actions</th></tr></thead>
-      <tbody><% pendingLoans.forEach(l => { %>
-        <tr>
-          <td><div style="font-weight:600;font-size:0.9rem;"><%= l.user_name || 'User #' + l.user_id %></div>
-            <div style="font-size:0.75rem;color:var(--text-light);">Purpose: <%= l.purpose || '—' %></div></td>
-          <td><strong><%= l.loan_type %></strong></td>
-          <td style="text-align:right;"><div style="font-weight:800;"><%= currency(l.principal_amount) %></div>
-            <div style="font-size:0.72rem;color:var(--text-light);">Mo: <%= currency(l.monthly_payment || 0) %></div></td>
-          <td><%= l.term_months %> mo • <%= parseFloat(l.interest_rate).toFixed(2) %>%</td>
-          <td><%= l.annual_income ? '$' + Number(l.annual_income).toLocaleString() : '—' %></td>
-          <td>
-            <a href="/loans/<%= l.id %>" target="_blank" class="btn btn-light btn-sm">View</a>
-            <form method="POST" action="/admin/approvals/loans/<%= l.id %>" style="display:inline;" onsubmit="return confirm('Approve loan #<%= l.id %>? Funds will be disbursed to the linked account.');">
-              <button class="btn btn-success btn-sm">✅ Approve</button>
-            </form>
-            <form method="POST" action="/admin/approvals/loans/<%= l.id %>/reject" style="display:inline;" onsubmit="return confirm('Reject this loan application?');">
-              <button class="btn btn-danger btn-sm">❌ Reject</button>
-            </form>
-          </td>
-        </tr>
-      <% }) %></tbody></table></div>
-    </section>
-
-    <section id="sec-bills" class="app-section">
-      <h3 style="margin-bottom:14px;">📄 Bill Payments — <%= pendingBills.length %> pending</h3>
-      <% if (pendingBills.length === 0) { %><div class="empty-state" style="padding:28px;">✅ No pending bill payments.</div><% } %>
-      <div class="table-wrap"><table class="table"><thead><tr><th>Customer</th><th>Biller</th><th>Ref</th><th style="text-align:right;">Amount</th><th>Actions</th></tr></thead>
-      <tbody><% pendingBills.forEach(b => { %>
-        <tr>
-          <td><div style="font-weight:600;font-size:0.9rem;"><%= b.user_name || 'User #' + b.user_id %></div></td>
-          <td><strong><%= b.biller_name || 'Bill Payment' %></strong>
-            <div style="font-size:0.72rem;color:var(--text-light);">BPAY <%= b.biller_code || '—' %></div></td>
-          <td style="font-family:monospace;"><%= b.customer_ref || '—' %></td>
-          <td style="text-align:right;font-weight:700;color:var(--danger);"><%= currency(b.amount) %></td>
-          <td>
-            <form method="POST" action="/admin/approvals/bills/<%= b.id %>" style="display:inline;" onsubmit="return confirm('Approve bill #<%= b.id %>?');">
-              <button class="btn btn-success btn-sm">✅</button>
-            </form>
-            <form method="POST" action="/admin/approvals/bills/<%= b.id %>/reject" style="display:inline;" onsubmit="return confirm('Reject this bill payment?');">
-              <button class="btn btn-danger btn-sm">❌</button>
-            </form>
-          </td>
-        </tr>
-      <% }) %></tbody></table></div>
-    </section>
-
-  </div>
-</div>
-
-<script>
-document.querySelectorAll('.app-tab').forEach(tab => {
-  tab.addEventListener('click', (e) => {
-    e.preventDefault();
-    document.querySelectorAll('.app-tab').forEach(t => { t.style.borderBottomColor='transparent'; t.style.color='var(--text-gray)'; t.style.fontWeight='600'; });
-    tab.style.borderBottomColor='var(--primary)'; tab.style.color='var(--primary)'; tab.style.fontWeight='700';
-    const hash = tab.getAttribute('href').slice(1);
-    document.querySelectorAll('.app-section').forEach(s => s.style.opacity = (hash==='all' || ('sec-'+hash).includes(s.id.slice(4))) ? '1' : '0.25');
-  });
-});
-</script>
+          <div style="font-size:0.88rem;">
+            <% if (queue.key === 'kyc') { %>
+              <strong><%= record.document_type || 'Identity document' %></strong><div>Submitted <%= moment(record.submitted_at || record.created_at).format('DD MMM YYYY') %></div>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">
+                <% if (record.has_document_front) { %><a href="/kyc/<%= encodeURIComponent(record.id) %>/document/front" target="_blank" rel="noopener">Download front</a><% } %>
+                <% if (record.has_document_back) { %><a href="/kyc/<%= encodeURIComponent(record.id) %>/document/back" target="_blank" rel="noopener">Download back</a><% } %>
+                <% if (record.has_document_selfie) { %><a href="/kyc/<%= encodeURIComponent(record.id) %>/document/selfie" target="_blank" rel="noopener">Download selfie</a><% } %>
+              </div>
+            <% } else if (queue.key === 'transfers') { %>
+              <strong><%= String(record.transaction_type || 'transaction').replace(/_/g,' ') %></strong> · <%= currency(amount, record.currency || 'AUD') %>
+              <div><%= record.description || record.recipient_name || record.recipient_account || '—' %></div><% if (record.reference) { %><div>Customer reference: <%= record.reference %></div><% } %>
+              <div><a href="/admin/transactions/<%= encodeURIComponent(record.id) %>">Inspect transaction and ledger</a></div>
+            <% } else if (queue.key === 'cards') { %>
+              <strong><%= record.card_type || 'Card application' %></strong><div>Account <%= record.account_number || record.account_id || '—' %> · last four <%= record.card_last4 || '—' %></div>
+              <div style="color:var(--warning);">Approval records review only; a card issuer has not been contacted.</div>
+            <% } else if (queue.key === 'loans') { %>
+              <strong><%= record.loan_type || 'Loan application' %></strong><div><%= currency(amount) %> · <%= record.term_months || record.loan_term_months || '—' %> months · <%= Number(record.interest_rate || 0).toFixed(2) %>% p.a.</div>
+              <div>Requested purpose: <%= record.purpose || '—' %></div>
+            <% } else { %>
+              <strong><%= record.biller_name || 'Bill payment' %></strong> · <%= currency(amount) %><div>Customer reference: <%= record.customer_ref || '—' %></div>
+              <% if (record.transaction_id) { %><div>Transaction <a href="/admin/transactions/<%= encodeURIComponent(record.transaction_id) %>"><%= record.transaction_id %></a></div><% } %>
+            <% } %>
+          </div>
+          <form method="POST" action="/admin/approvals/<%= queue.key %>/<%= encodeURIComponent(record.id) %>/review" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end;">
+            <div class="form-group" style="margin:0;"><label class="form-label">Decision</label><select name="action" class="form-select" required><option value="">Choose</option><option value="approve">Approve</option><option value="reject">Reject</option></select></div>
+            <% if (queue.key === 'kyc') { %><label style="grid-column:1/-1;display:flex;gap:8px;align-items:flex-start;font-size:0.82rem;"><input type="checkbox" name="documents_reviewed" value="yes"><span>I downloaded and reviewed the required identity documents. This confirmation is required to approve KYC.</span></label><% } %>
+            <% if (needsLoanAccount) { %>
+              <div class="form-group" style="margin:0;"><label class="form-label">Disbursement account</label><select name="account_id" class="form-select" <%= loanAccounts.length ? 'required' : 'disabled' %>><option value="">Choose an active customer account</option><% loanAccounts.forEach(a => { %><option value="<%= a.id %>"><%= a.account_name || a.account_type %> · <%= a.account_number %></option><% }) %></select></div>
+            <% } %>
+            <% if (settlementRequired) { %>
+              <div class="form-group" style="margin:0;grid-column:1/-1;"><label class="form-label"><%= queue.key === 'loans' ? 'Verified funding / settlement reference' : 'Verified external settlement reference' %> <span style="font-weight:400;">(required to approve)</span></label><input name="settlement_reference" class="form-input" minlength="3" maxlength="120" pattern="[A-Za-z0-9._:/-]+" placeholder="Reference from confirmed external settlement"></div>
+            <% } %>
+            <div class="form-group" style="margin:0;grid-column:1/-1;"><label class="form-label">Decision reason (required)</label><input name="reason" class="form-input" minlength="8" maxlength="500" required placeholder="At least 8 characters"></div>
+            <% if (needsLoanAccount && !loanAccounts.length) { %><p class="form-hint" style="grid-column:1/-1;margin:0;">No active customer account is available. This loan cannot be disbursed until an account is opened.</p><% } %>
+            <button type="submit" class="btn btn-primary" <%= needsLoanAccount && !loanAccounts.length ? 'disabled' : '' %> style="grid-column:1/-1;">Record decision</button>
+          </form>
+        </div>
+      <% }) %>
+    </div>
+  </section>
+<% }) %>
 
 <%- include('../partials/layouts/admin-end') -%>
-
-

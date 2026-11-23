@@ -1,0 +1,58 @@
+<%- include('../partials/layouts/admin-start') -%>
+
+<a href="/admin/transactions" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← All transactions</a>
+<div class="card" style="margin-bottom:20px;">
+  <div class="card-header">
+    <h2 class="card-title">Transaction <span style="font-family:monospace;">#<%= transaction.id %></span></h2>
+    <span class="status-badge status-<%= transaction.status || 'unknown' %>"><%= transaction.status || 'unknown' %></span>
+  </div>
+  <div class="card-body">
+    <div class="grid-2">
+      <dl>
+        <dt>Customer</dt><dd><a href="/admin/users/<%= encodeURIComponent(transaction.user_id) %>"><%= [user?.first_name, user?.last_name].filter(Boolean).join(' ') || `User #${transaction.user_id}` %></a></dd>
+        <dt>Account</dt><dd><a href="/admin/accounts/<%= encodeURIComponent(transaction.account_id) %>"><%= account?.account_name || 'Account' %> · <%= account?.account_number || transaction.account_id %></a></dd>
+        <dt>Type</dt><dd><%= String(transaction.transaction_type || 'transaction').replace(/_/g,' ') %></dd>
+        <dt>Amount</dt><dd><%= currency(transaction.amount || 0, transaction.currency || 'AUD') %></dd>
+        <dt>Fee</dt><dd><%= currency(transaction.fee || 0, transaction.currency || 'AUD') %></dd>
+      </dl>
+      <dl>
+        <dt>Created</dt><dd><%= moment(transaction.created_at).format('DD MMM YYYY HH:mm:ss') %></dd>
+        <dt>Reference</dt><dd style="font-family:monospace;word-break:break-all;"><%= transaction.reference || transaction.settlement_reference || '—' %></dd>
+        <dt>Recipient</dt><dd><%= transaction.recipient_name || transaction.recipient_account || '—' %></dd>
+        <dt>Reviewer</dt><dd><%= transaction.reviewed_by || transaction.approved_by || '—' %></dd>
+        <dt>Review reason</dt><dd><%= transaction.review_reason || transaction.rejection_reason || transaction.approval_reason || '—' %></dd>
+      </dl>
+    </div>
+    <% if (transaction.description) { %><p style="margin-bottom:0;color:var(--text-gray);"><strong>Description:</strong> <%= transaction.description %></p><% } %>
+    <% if (billPayment) { %>
+      <div class="alert alert-info" style="margin-top:16px;"><span class="alert-icon">i</span><div class="alert-content"><div class="alert-title">Linked bill payment #<%= billPayment.id %></div><p class="alert-message" style="margin:0;"><%= billPayment.biller_name || 'Bill payment' %> · <%= currency(billPayment.amount || 0) %> · <%= billPayment.status || 'unknown' %></p></div></div>
+    <% } %>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h3 class="card-title">Immutable ledger entries</h3><span class="status-badge">Read-only</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Created</th><th>Entry type</th><th>Amount</th><th>Balance after</th><th>Available after</th><th>Status</th><th>Reference</th><th>Description</th></tr></thead>
+      <tbody>
+        <% (ledgerEntries || []).forEach(entry => { %>
+          <tr>
+            <td><%= moment(entry.created_at).format('DD MMM YYYY HH:mm:ss') %></td>
+            <td><%= String(entry.entry_type || 'ledger entry').replace(/_/g,' ') %></td>
+            <td><%= currency(entry.amount || 0, entry.currency || 'AUD') %></td>
+            <td><%= entry.balance_after === undefined ? '—' : currency(entry.balance_after, entry.currency || 'AUD') %></td>
+            <td><%= entry.available_after === undefined ? '—' : currency(entry.available_after, entry.currency || 'AUD') %></td>
+            <td><span class="status-badge status-<%= entry.status || 'unknown' %>"><%= entry.status || 'unknown' %></span></td>
+            <td style="font-family:monospace;"><%= entry.reference || entry.reference_id || '—' %></td>
+            <td><%= entry.description || '—' %></td>
+          </tr>
+        <% }) %>
+        <% if (!(ledgerEntries || []).length) { %><tr><td colspan="8">No ledger entries were found for this transaction.</td></tr><% } %>
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body" style="border-top:1px solid var(--border);color:var(--text-gray);font-size:0.85rem;">Transaction and ledger history cannot be edited or deleted. Corrections must be made through a separate, reasoned admin operation that appends a compensating transaction.</div>
+</div>
+
+<%- include('../partials/layouts/admin-end') -%>

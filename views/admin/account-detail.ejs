@@ -1,142 +1,101 @@
 <%- include('../partials/layouts/admin-start') -%>
 
 <a href="/admin/accounts" class="btn btn-outline btn-sm" style="margin-bottom:16px;">← All Accounts</a>
-
+<% const accountStatus = String(account.status || 'active').toLowerCase(); const statusEditable = ['active','frozen','blocked'].includes(accountStatus); %>
 <div class="grid-2">
   <div class="card">
-    <div class="card-header">
-      <h3 class="card-title">🏦 Account #<%= String(account.id).padStart(6, '0') %></h3>
-      <span class="status-badge status-<%= account.status %>"><%= account.status %></span>
-    </div>
+    <div class="card-header"><h2 class="card-title">Account #<%= String(account.id).padStart(6, '0') %></h2><span class="status-badge status-<%= accountStatus %>"><%= accountStatus %></span></div>
     <div class="card-body">
       <div class="stat-cards" style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:20px;">
-        <div style="padding:16px;background:var(--primary-alpha);border-radius:var(--radius);">
-          <div style="font-size:0.72rem;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.05em;">Current Balance</div>
-          <div style="font-size:1.7rem;font-weight:900;color:var(--primary);margin-top:4px;"><%= currency(account.balance) %></div>
-        </div>
-        <div style="padding:16px;background:var(--success-light);border-radius:var(--radius);">
-          <div style="font-size:0.72rem;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.05em;">Available</div>
-          <div style="font-size:1.7rem;font-weight:900;color:var(--success);margin-top:4px;"><%= currency(account.available_balance) %></div>
-        </div>
+        <div style="padding:16px;background:var(--primary-alpha);border-radius:var(--radius);"><div class="mini-stat-label">Balance (read-only)</div><div class="mini-stat-value"><%= currency(account.balance || 0) %></div></div>
+        <div style="padding:16px;background:var(--success-light);border-radius:var(--radius);"><div class="mini-stat-label">Available (read-only)</div><div class="mini-stat-value"><%= currency(account.available_balance ?? account.balance ?? 0) %></div></div>
       </div>
-      <div style="display:grid;gap:10px;">
-        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
-          <span style="color:var(--text-gray);">Type</span><strong><%= account.account_type %></strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
-          <span style="color:var(--text-gray);">Owner</span><strong><a href="/admin/users/<%= account.user_id %>" style="color:var(--primary);"><%= account.user_name || 'User #' + account.user_id %></a></strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
-          <span style="color:var(--text-gray);">BSB • Number</span><strong style="font-family:monospace;">BSB <%= account.bsb %> • <%= account.account_number %></strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
-          <span style="color:var(--text-gray);">Name</span><strong><%= account.account_name %></strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
-          <span style="color:var(--text-gray);">Branch</span><strong><%= account.branch %></strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
-          <span style="color:var(--text-gray);">Interest Rate</span><strong style="color:var(--primary);"><%= parseFloat(account.interest_rate).toFixed(2) %>% p.a.</strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;padding:10px 0;">
-          <span style="color:var(--text-gray);">Opened</span><strong><%= moment(account.opened_date || account.created_at).format('DD MMM YYYY') %></strong>
-        </div>
-      </div>
-      <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap;">
-        <form method="POST" action="/admin/accounts/<%= account.id %>/status" style="display:inline;">
-          <select name="status" onchange="this.form.submit()" class="form-select">
-            <option value="active" <%= account.status === 'active' ? 'selected' : '' %>>active</option>
-            <option value="frozen" <%= account.status === 'frozen' ? 'selected' : '' %>>frozen</option>
-            <option value="blocked" <%= account.status === 'blocked' ? 'selected' : '' %>>blocked</option>
-            <option value="closed" <%= account.status === 'closed' ? 'selected' : '' %>>closed</option>
-          </select>
-        </form>
-        <button class="btn btn-primary" onclick="document.getElementById('editAccountModal').classList.add('active')">✏️ Edit Account</button>
-        <button class="btn btn-outline" onclick="document.getElementById('adj2').classList.add('active')">💰 Adjust Balance</button>
-        <a href="/admin/transactions/new?account_id=<%= account.id %>" class="btn btn-light">➕ Add Transaction</a>
-      </div>
+      <dl style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div><dt>Owner</dt><dd><a href="/admin/users/<%= encodeURIComponent(account.user_id) %>"><%= account.user_name || 'User #' + account.user_id %></a></dd></div>
+        <div><dt>Type</dt><dd><%= account.account_type || '—' %></dd></div>
+        <div><dt>Account name</dt><dd><%= account.account_name || '—' %></dd></div>
+        <div><dt>Branch</dt><dd><%= account.branch || '—' %></dd></div>
+        <div><dt>BSB / number</dt><dd style="font-family:monospace;"> <%= account.bsb || '—' %> / <%= account.account_number || '—' %></dd></div>
+        <div><dt>Currency</dt><dd><%= account.currency || 'AUD' %></dd></div>
+        <div><dt>Interest rate</dt><dd><%= account.interest_rate || 0 %>%</dd></div>
+        <div><dt>Opened</dt><dd><%= moment(account.opened_date || account.created_at).format('DD MMM YYYY') %></dd></div>
+      </dl>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-header"><h3 class="card-title">📋 Transactions (100 latest)</h3></div>
-    <div class="table-wrap" style="max-height:720px;overflow:auto;">
-      <table class="table">
-        <thead><tr><th>Date</th><th>Type</th><th style="text-align:right;">Amount</th><th>Status</th></tr></thead>
-        <tbody>
-          <% (transactions||[]).forEach(tx => { %>
-            <tr><td style="font-size:0.82rem;"><%= moment(tx.created_at).format('DD MMM HH:mm') %></td>
-            <td><div style="font-size:0.85rem;"><%= (tx.recipient_name || tx.description || tx.transaction_type.replace(/_/g,' ')).slice(0,25) %></div>
-              <div style="font-size:0.7rem;color:var(--text-light);"><%= tx.transaction_type.replace(/_/g,' ') %></div></td>
-            <td style="text-align:right;font-weight:700;color:<%= parseFloat(tx.amount)<0?'var(--danger)':'var(--success)' %>;"><%= currency(tx.amount) %></td>
-            <td>
-              <span class="status-badge status-<%= tx.status %>" style="font-size:0.65rem;"><%= tx.status %></span>
-              <a href="/admin/transactions/<%= tx.id %>" class="btn btn-light btn-sm" style="margin-left:8px;">Edit</a>
-            </td></tr>
-          <% }) %>
-        </tbody>
-      </table>
+    <div class="card-header"><h3 class="card-title">Audited account controls</h3></div>
+    <div class="card-body">
+      <% if (statusEditable) { %>
+        <form method="POST" action="/admin/accounts/<%= encodeURIComponent(account.id) %>/status" style="margin-bottom:24px;">
+          <div class="form-group"><label class="form-label">Operational status</label>
+            <select name="status" required class="form-select"><% ['active','frozen','blocked','closed'].forEach(s => { %><option value="<%= s %>" <%= s === accountStatus ? 'selected' : '' %>><%= s %></option><% }) %></select>
+          </div>
+          <div class="form-group"><label class="form-label">Reason (required)</label><input type="text" name="reason" required minlength="8" maxlength="500" class="form-input" placeholder="Customer request, investigation, or verified correction"></div>
+          <button type="submit" class="btn btn-primary">Save audited status</button>
+        </form>
+        <% if (accountStatus === 'active') { %>
+          <form method="POST" action="/admin/accounts/<%= encodeURIComponent(account.id) %>/balance-adjustment" style="border-top:1px solid var(--border);padding-top:18px;">
+            <input type="hidden" name="operation_id" value="<%= operationId %>">
+            <h4>Audited balance adjustment</h4>
+            <p class="form-hint">Appends a transaction, ledger entry, audit event, and customer notification. Default per-operation limit: AUD 10,000.</p>
+            <div class="form-grid">
+              <div class="form-group"><label class="form-label">Direction</label><select name="adjustment_type" class="form-select" required><option value="credit">Credit</option><option value="debit">Debit</option></select></div>
+              <div class="form-group"><label class="form-label">Amount (AUD)</label><input name="amount" class="form-input" type="number" min="0.01" step="0.01" max="10000" required></div>
+            </div>
+            <div class="form-group"><label class="form-label">Case / verified supporting reference</label><input name="reference" class="form-input" minlength="3" maxlength="120" pattern="[A-Za-z0-9._:/-]+" required></div>
+            <div class="form-group"><label class="form-label">Reason</label><input name="reason" class="form-input" minlength="8" maxlength="500" required></div>
+            <button type="submit" class="btn btn-warning">Commit audited adjustment</button>
+          </form>
+        <% } %>
+      <% } else { %>
+        <div class="alert alert-warning"><span class="alert-icon">!</span><div class="alert-content"><div class="alert-title">Status change unavailable</div><p class="alert-message">Closed or legacy-status accounts require review and cannot be reopened here.</p></div></div>
+      <% } %>
+      <form method="POST" action="/admin/accounts/<%= encodeURIComponent(account.id) %>/update">
+        <h4>Display metadata</h4>
+        <div class="form-group"><label class="form-label">Account name</label><input type="text" name="account_name" required minlength="2" maxlength="100" value="<%= account.account_name || '' %>" class="form-input"></div>
+        <div class="form-group"><label class="form-label">Branch</label><input type="text" name="branch" maxlength="80" value="<%= account.branch || '' %>" class="form-input"></div>
+        <div class="form-group"><label class="form-label">Reason (required)</label><input type="text" name="reason" required minlength="8" maxlength="500" class="form-input" placeholder="Verified label correction reference"></div>
+        <p class="form-hint">Account numbers, ownership, balance, available balance, currency, interest, and existing ledger entries are not editable here. Closure requires a zero balance and no pending transactions.</p>
+        <button type="submit" class="btn btn-outline">Save audited metadata</button>
+      </form>
     </div>
   </div>
 </div>
 
-<div class="modal" id="editAccountModal"><div class="modal-dialog" style="max-width:640px;">
-  <div class="modal-header"><h3 class="modal-title">✏️ Edit Account</h3>
-  <button class="modal-close" onclick="document.getElementById('editAccountModal').classList.remove('active')">✕</button></div>
-  <form method="POST" action="/admin/accounts/<%= account.id %>/update">
-    <div class="modal-body">
-      <div class="form-grid">
-        <div class="form-group"><label class="form-label">Account Type</label><input type="text" name="account_type" class="form-input" value="<%= account.account_type %>"></div>
-        <div class="form-group"><label class="form-label">Account Name</label><input type="text" name="account_name" class="form-input" value="<%= account.account_name %>"></div>
-      </div>
-      <div class="form-grid">
-        <div class="form-group"><label class="form-label">Account Number</label><input type="text" name="account_number" class="form-input" value="<%= account.account_number %>"></div>
-        <div class="form-group"><label class="form-label">BSB</label><input type="text" name="bsb" class="form-input" value="<%= account.bsb %>"></div>
-      </div>
-      <div class="form-grid">
-        <div class="form-group"><label class="form-label">Currency</label><input type="text" name="currency" class="form-input" value="<%= account.currency || 'AUD' %>"></div>
-        <div class="form-group"><label class="form-label">Branch</label><input type="text" name="branch" class="form-input" value="<%= account.branch || '' %>"></div>
-      </div>
-      <div class="form-grid">
-        <div class="form-group"><label class="form-label">Balance</label><input type="number" step="0.01" name="balance" class="form-input" value="<%= account.balance %>"></div>
-        <div class="form-group"><label class="form-label">Available Balance</label><input type="number" step="0.01" name="available_balance" class="form-input" value="<%= account.available_balance %>"></div>
-      </div>
-      <div class="form-grid">
-        <div class="form-group"><label class="form-label">Interest Rate</label><input type="number" step="0.01" name="interest_rate" class="form-input" value="<%= account.interest_rate %>"></div>
-        <div class="form-group"><label class="form-label">Status</label>
-          <select name="status" class="form-select">
-            <option value="active" <%= account.status === 'active' ? 'selected' : '' %>>active</option>
-            <option value="frozen" <%= account.status === 'frozen' ? 'selected' : '' %>>frozen</option>
-            <option value="blocked" <%= account.status === 'blocked' ? 'selected' : '' %>>blocked</option>
-            <option value="closed" <%= account.status === 'closed' ? 'selected' : '' %>>closed</option>
-          </select>
-        </div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button type="button" class="btn btn-light" onclick="document.getElementById('editAccountModal').classList.remove('active')">Cancel</button>
-      <button type="submit" class="btn btn-primary">💾 Save Account</button>
-    </div>
-  </form>
-</div></div>
+<div class="card" style="margin-top:20px;">
+  <div class="card-header"><h3 class="card-title">Transaction history (read-only)</h3></div>
+  <div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead><tbody>
+    <% (transactions || []).forEach(tx => { %><tr>
+      <td><%= moment(tx.created_at).format('DD MMM YYYY HH:mm') %></td>
+      <td><a href="/admin/transactions/<%= encodeURIComponent(tx.id) %>"><%= String(tx.transaction_type || 'transaction').replace(/_/g,' ') %></a></td>
+      <td><%= tx.recipient_name || tx.description || '—' %></td>
+      <td><%= currency(tx.amount || 0) %></td>
+      <td><span class="status-badge status-<%= tx.status %>"><%= tx.status || 'unknown' %></span></td>
+    </tr><% }) %>
+    <% if (!(transactions || []).length) { %><tr><td colspan="5">No transaction records.</td></tr><% } %>
+  </tbody></table></div>
+</div>
 
-<div class="modal" id="adj2"><div class="modal-dialog">
-  <div class="modal-header"><h3 class="modal-title">💰 Adjust #<%= String(account.id).padStart(6,'0') %></h3>
-  <button class="modal-close" onclick="document.getElementById('adj2').classList.remove('active')">✕</button></div>
-  <form method="POST" action="/admin/accounts/adjust">
-    <div class="modal-body">
-      <input type="hidden" name="account_id" value="<%= account.id %>">
-      <div class="form-group"><label class="form-label">Type</label>
-        <select name="type" class="form-select"><option value="credit">➕ Credit</option><option value="debit">➖ Debit</option></select></div>
-      <div class="form-group"><label class="form-label">Amount *</label><input type="number" name="amount" step="0.01" required class="form-input"></div>
-      <div class="form-group"><label class="form-label">Reason</label><input type="text" name="notes" class="form-input" placeholder="Reason for adjustment"></div>
-    </div>
-    <div class="modal-footer">
-      <button type="button" class="btn btn-light" onclick="document.getElementById('adj2').classList.remove('active')">Cancel</button>
-      <button type="submit" class="btn btn-primary">✅ Apply</button>
-    </div>
-  </form>
-</div></div>
+<div class="card" style="margin-top:20px;">
+  <div class="card-header"><h3 class="card-title">Immutable account ledger</h3><span class="status-badge">Read-only</span></div>
+  <div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Entry</th><th>Amount</th><th>Balance after</th><th>Available after</th><th>Status</th><th>Reference</th></tr></thead><tbody>
+    <% (ledgerEntries || []).forEach(entry => { %><tr>
+      <td><%= moment(entry.created_at).format('DD MMM YYYY HH:mm') %></td><td><%= String(entry.entry_type || 'entry').replace(/_/g,' ') %></td>
+      <td><%= currency(entry.amount || 0, entry.currency || 'AUD') %></td>
+      <td><%= entry.balance_after === undefined ? '—' : currency(entry.balance_after, entry.currency || 'AUD') %></td>
+      <td><%= entry.available_after === undefined ? '—' : currency(entry.available_after, entry.currency || 'AUD') %></td>
+      <td><span class="status-badge status-<%= entry.status || 'unknown' %>"><%= entry.status || 'unknown' %></span></td>
+      <td style="font-family:monospace;"><%= entry.reference || entry.reference_id || '—' %></td>
+    </tr><% }) %>
+    <% if (!(ledgerEntries || []).length) { %><tr><td colspan="7">No ledger entries.</td></tr><% } %>
+  </tbody></table></div>
+</div>
+
+<style>
+.mini-stat-label{font-size:0.72rem;color:var(--text-gray);text-transform:uppercase;letter-spacing:0.05em;}
+.mini-stat-value{font-size:1.5rem;font-weight:900;color:var(--primary);margin-top:4px;}
+dl{margin:0;}dt{font-size:0.75rem;color:var(--text-light);text-transform:uppercase;}dd{margin:3px 0 0;font-weight:600;}
+</style>
 
 <%- include('../partials/layouts/admin-end') -%>
-

@@ -25,12 +25,16 @@ function requireVerified(req, res, next) {
   next();
 }
 
+function isAdminUser(user) {
+  return Boolean(user && (user.is_admin === true || Number(user.is_admin) === 1 || user.role === 'admin' || user.role === 'super_admin'));
+}
+
 function requireAdmin(req, res, next) {
   if (!req.auth || !req.auth.uid) {
     req.session.error = 'Please login to access this page.';
     return res.redirect('/auth/login');
   }
-  if (!req.user || !(req.user.is_admin === true || Number(req.user.is_admin) === 1 || req.user.role === 'admin')) {
+  if (!isAdminUser(req.user)) {
     req.session.error = 'Access denied. Admin privileges required.';
     return res.redirect('/user/dashboard');
   }
@@ -113,6 +117,7 @@ function generateAccountNumber() {
 module.exports = {
   requireAuth,
   requireVerified,
+  isAdminUser,
   requireAdmin,
   getUserAccounts,
   getAccountStatusMessage,

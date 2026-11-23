@@ -1,8 +1,8 @@
 <%- include('../partials/layouts/admin-start') -%>
 
 <div class="d-flex align-center justify-between flex-wrap gap-3" style="margin-bottom:16px;">
-  <h2 style="margin-bottom:0;">💸 All Transactions (500 latest)</h2>
-  <a href="/admin/transactions/new" class="btn btn-primary">➕ Add Transaction</a>
+  <h2 style="margin-bottom:0;">All Transactions <span style="font-size:0.85rem;color:var(--text-light);">(500 latest, history immutable)</span></h2>
+  <span class="status-badge status-pending">Use compensating audited entries; never edit history</span>
 </div>
 
 <div class="card" style="margin-bottom:20px;">
@@ -43,7 +43,7 @@
   </form>
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>ID & Date</th><th>Customer</th><th>Type & Description</th><th>Reference</th><th style="text-align:right;">Amount</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>ID & Date</th><th>Customer</th><th>Type & Description</th><th>Reference</th><th style="text-align:right;">Amount</th><th>Status</th><th>Control</th></tr></thead>
       <tbody>
         <% transactions.forEach(tx => { %>
           <tr>
@@ -59,17 +59,7 @@
               <% if (parseFloat(tx.fee)>0) { %><div style="font-size:0.7rem;color:var(--text-light);">Fee <%= currency(tx.fee) %></div><% } %>
             </td>
             <td><span class="status-badge status-<%= tx.status %>"><%= tx.status %></span></td>
-            <td style="white-space:nowrap;">
-              <a href="/admin/transactions/<%= tx.id %>" class="btn btn-light btn-sm">Edit</a>
-              <% if (tx.status === 'pending') { %>
-                <form method="POST" action="/admin/approvals/transfers/<%= tx.id %>" style="display:inline;">
-                  <button class="btn btn-success btn-sm">✓</button>
-                </form>
-                <form method="POST" action="/admin/approvals/transfers/<%= tx.id %>/reject" style="display:inline;">
-                  <button class="btn btn-danger btn-sm">✕</button>
-                </form>
-              <% } %>
-            </td>
+            <td><a class="btn btn-light btn-sm" href="/admin/transactions/<%= encodeURIComponent(tx.id) %>">View ledger</a></td>
           </tr>
         <% }) %>
       </tbody>
@@ -78,5 +68,3 @@
 </div>
 
 <%- include('../partials/layouts/admin-end') -%>
-
-

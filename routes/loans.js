@@ -3,7 +3,7 @@
 const express = require('express');
 const crypto = require('node:crypto');
 const { createFirestoreRepository } = require('../services/firestore-rest');
-const { toMinorUnits, fromMinorUnits } = require('../services/money');
+const { toMinorUnits, readMinorUnits, fromMinorUnits } = require('../services/money');
 const {
   requireAuth,
   requireVerified,
@@ -24,17 +24,12 @@ function queueTransactionEmail(txnId, note) {
     console.error(`Failed to send transaction email for txn ${txnId}:`, error);
   });
 }
-function legacyMinor(record, minorField, legacyField) {
-  if (Number.isSafeInteger(record && record[minorField])) return record[minorField];
-  if (record && record[legacyField] !== undefined && record[legacyField] !== null) return toMinorUnits(String(record[legacyField]));
-  return 0;
-}
 function loanForView(loan, account) {
-  const principalMinor = legacyMinor(loan, 'loan_amount_minor', 'loan_amount');
-  const monthlyMinor = legacyMinor(loan, 'monthly_repayment_minor', 'monthly_repayment');
-  const totalMinor = legacyMinor(loan, 'total_repayment_minor', 'total_repayment');
+  const principalMinor = readMinorUnits(loan, 'loan_amount_minor', 'loan_amount');
+  const monthlyMinor = readMinorUnits(loan, 'monthly_repayment_minor', 'monthly_repayment');
+  const totalMinor = readMinorUnits(loan, 'total_repayment_minor', 'total_repayment');
   const remainingMinor = loan.remaining_balance_minor !== undefined
-    ? legacyMinor(loan, 'remaining_balance_minor', 'remaining_balance') : principalMinor;
+    ? readMinorUnits(loan, 'remaining_balance_minor', 'remaining_balance') : principalMinor;
   return {
     ...loan,
     principal_amount: fromMinorUnits(principalMinor),
@@ -55,14 +50,12 @@ function accountForView(account) {
   if (!account) return account;
   return {
     ...account,
-    balance: fromMinorUnits(legacyMinor(account, 'balance_minor', 'balance')),
-    available_balance: fromMinorUnits(account.available_balance_minor !== undefined
-      ? legacyMinor(account, 'available_balance_minor', 'available_balance')
-      : legacyMinor(account, 'balance_minor', 'balance'))
+    balance: fromMinorUnits(readMinorUnits(account, 'balance_minor', 'balance')),
+    available_balance: fromMinorUnits(readMinorUnits(account, 'available_balance_minor', 'available_balance', readMinorUnits(account, 'balance_minor', 'balance')))
   };
 }
 function paymentForView(payment) {
-  const amountMinor = legacyMinor(payment, 'amount_minor', 'amount');
+  const amountMinor = readMinorUnits(payment, 'amount_minor', 'amount');
   return { ...payment, amount: fromMinorUnits(amountMinor), paid_at: payment.payment_date || payment.created_at, created_at: payment.created_at || payment.payment_date };
 }
 
@@ -212,9 +205,9 @@ router.post('/:id/payment', requireAuth, async (req, res) => {
       if (!account || String(account.user_id) !== uidValue) throw Object.assign(new Error('Invalid account selected.'), { userError: true });
       const restriction = getAccountStatusMessage(accountForView(account), 'make loan repayments');
       if (restriction) throw Object.assign(new Error(restriction), { userError: true });
-      const availableMinor = legacyMinor(account, 'available_balance_minor', 'available_balance');
-      const balanceMinor = legacyMinor(account, 'balance_minor', 'balance');
-      const remainingMinor = loan.remaining_balance_minor !== undefined ? legacyMinor(loan, 'remaining_balance_minor', 'remaining_balance') : legacyMinor(loan, 'loan_amount_minor', 'loan_amount');
+      const availableMinor = readMinorUnits(account, 'available_balance_minor', 'available_balance', readMinorUnits(account, 'balance_minor', 'balance'));
+      const balanceMinor = readMinorUnits(account, 'balance_minor', 'balance');
+      const remainingMinor = loan.remaining_balance_minor !== undefined ? readMinorUnits(loan, 'remaining_balance_minor', 'remaining_balance') : readMinorUnits(loan, 'loan_amount_minor', 'loan_amount');
       if (amountMinor > availableMinor) throw Object.assign(new Error('Insufficient funds.'), { userError: true });
       if (amountMinor > remainingMinor) throw Object.assign(new Error('Payment exceeds the remaining loan balance.'), { userError: true });
       loanType = String(loan.loan_type || 'Loan');

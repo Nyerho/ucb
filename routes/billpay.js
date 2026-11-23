@@ -4,7 +4,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { requireAuth, requireVerified, getAccountStatusMessage } = require('../middleware/auth');
 const { createFirestoreRepository } = require('../services/firestore-rest');
-const { toMinorUnits, fromMinorUnits } = require('../services/money');
+const { toMinorUnits, readMinorUnits, fromMinorUnits } = require('../services/money');
 const { sendTransactionActivityEmailById } = require('../services/email');
 
 const router = express.Router();
@@ -19,17 +19,15 @@ function queueTransactionEmail(txnId, note) {
 }
 function userId(req) { return String(req.session.userId); }
 function amountMinor(doc, key = 'amount_minor') {
-  if (Number.isSafeInteger(doc && doc[key])) return doc[key];
-  // Legacy records are read-only compatible; all new writes use *_minor.
-  if (doc && doc[key.replace('_minor', '')] !== undefined) return toMinorUnits(String(doc[key.replace('_minor', '')]));
-  return 0;
+  return readMinorUnits(doc, key, key.replace('_minor', ''));
 }
 function displayAmount(doc, key = 'amount_minor') { return fromMinorUnits(amountMinor(doc, key)); }
 function accountForView(account) {
   if (!account) return account;
+  const balance = readMinorUnits(account, 'balance_minor', 'balance');
   return { ...account,
-    balance: fromMinorUnits(Number.isSafeInteger(account.balance_minor) ? account.balance_minor : amountMinor({ amount: account.balance }, 'amount_minor')),
-    available_balance: fromMinorUnits(Number.isSafeInteger(account.available_balance_minor) ? account.available_balance_minor : amountMinor({ amount: account.available_balance }, 'amount_minor'))
+    balance: fromMinorUnits(balance),
+    available_balance: fromMinorUnits(readMinorUnits(account, 'available_balance_minor', 'available_balance', balance))
   };
 }
 function paymentForView(payment, account) {
@@ -52,9 +50,8 @@ async function accountOwned(tx, accountId, uid) {
   return account && account.user_id === uid ? account : null;
 }
 function balanceMinor(account, field) {
-  const minorField = `${field}_minor`;
-  if (Number.isSafeInteger(account[minorField])) return account[minorField];
-  return toMinorUnits(String(account[field] ?? '0'));
+  const fallback = field === 'available_balance' ? readMinorUnits(account, 'balance_minor', 'balance') : 0;
+  return readMinorUnits(account, `${field}_minor`, field, fallback);
 }
 function paymentStatusError(res, req, redirect, message) {
   req.session.error = message;

@@ -3,7 +3,7 @@
 const express = require('express');
 const crypto = require('node:crypto');
 const { createFirestoreRepository } = require('../services/firestore-rest');
-const { toMinorUnits, fromMinorUnits } = require('../services/money');
+const { toMinorUnits, readMinorUnits, fromMinorUnits } = require('../services/money');
 const { requireAuth, requireVerified, getAccountStatusMessage, generateAccountNumber } = require('../middleware/auth');
 const router = express.Router();
 const repo = createFirestoreRepository();
@@ -11,18 +11,19 @@ router.use(require('../middleware/production-financial-gate'));
 
 function accountForView(account) {
   if (!account) return account;
+  const balanceMinor = readMinorUnits(account, 'balance_minor', 'balance');
   return {
     ...account,
-    balance: fromMinorUnits(Number(account.balance_minor || 0)),
-    available_balance: fromMinorUnits(Number(account.available_balance_minor ?? account.balance_minor ?? 0))
+    balance: fromMinorUnits(balanceMinor),
+    available_balance: fromMinorUnits(readMinorUnits(account, 'available_balance_minor', 'available_balance', balanceMinor))
   };
 }
 
 function transactionForView(transaction) {
   return {
     ...transaction,
-    amount: fromMinorUnits(Number(transaction.amount_minor || 0)),
-    fee: fromMinorUnits(Number(transaction.fee_minor || 0))
+    amount: fromMinorUnits(readMinorUnits(transaction, 'amount_minor', 'amount')),
+    fee: fromMinorUnits(readMinorUnits(transaction, 'fee_minor', 'fee'))
   };
 }
 
@@ -140,13 +141,13 @@ router.post('/:id/close', requireAuth, requireVerified, async (req, res) => {
       req.session.error = restrictionMessage;
       return res.redirect(`/accounts/${req.params.id}`);
     }
-    if (Number(account.balance_minor || 0) > 0) {
+    if (readMinorUnits(account, 'balance_minor', 'balance') > 0) {
       req.session.error = 'Please transfer remaining balance before closing.';
       return res.redirect(`/accounts/${req.params.id}`);
     }
     await repo.runTransaction(async (tx) => {
       const current = await tx.get('accounts', String(req.params.id));
-      if (!current || String(current.user_id) !== uid || Number(current.balance_minor || 0) !== 0 || current.status !== account.status) {
+      if (!current || String(current.user_id) !== uid || readMinorUnits(current, 'balance_minor', 'balance') !== 0 || current.status !== account.status) {
         throw new Error('Account changed before closure; retry the request.');
       }
       const now = new Date().toISOString();

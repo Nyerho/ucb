@@ -1,18 +1,19 @@
 <%- include('../partials/layouts/admin-start') -%>
 
-<h2 style="margin-bottom:16px;">🏦 Manage Loans (200)</h2>
+<h2 style="margin-bottom:16px;">Manage Loans <span style="font-size:0.85rem;color:var(--text-light);">(latest 200)</span></h2>
+<div class="alert alert-info" style="margin-bottom:20px;"><span class="alert-icon">i</span><div class="alert-content"><div class="alert-title">Audited decision flow</div><p class="alert-message" style="margin:0;">Pending applications are reviewed from the approval queue. A disbursement requires verified KYC, an eligible customer account, a loan-product limit check, and a verified funding reference. Repayment history is retained.</p></div></div>
 
 <div class="card">
-  <div class="filter-bar">
-    <div class="filter-group"><span class="filter-label">Search</span><input type="text" class="form-input" placeholder="Customer name or ID"></div>
+  <form class="filter-bar" method="GET" action="/admin/loans">
+    <div class="filter-group"><label class="filter-label" for="loanSearch">Search</label><input id="loanSearch" name="search" value="<%= filters.search || '' %>" type="text" class="form-input" placeholder="Customer name or ID"></div>
     <div class="filter-group"><span class="filter-label">Type</span>
-      <select class="form-select"><option value="">All Types</option><option>Personal</option><option>Home</option><option>Car</option><option>Business</option><option>Education</option></select>
+      <select class="form-select" name="type"><option value="all">All Types</option><% ['Personal Loan','Home Loan','Car Loan','Business Loan','Education Loan','Line of Credit'].forEach(t=>{ %><option value="<%= t %>" <%= filters.type === t ? 'selected' : '' %>><%= t %></option><% }) %></select>
     </div>
     <div class="filter-group"><span class="filter-label">Status</span>
-      <select class="form-select"><option value="">All</option><option>pending</option><option>active</option><option>paid</option><option>rejected</option></select>
+      <select class="form-select" name="status"><option value="all">All</option><% ['pending','disbursed','active','paid','rejected'].forEach(s=>{ %><option value="<%= s %>" <%= filters.status === s ? 'selected' : '' %>><%= s %></option><% }) %></select>
     </div>
-    <button class="btn btn-primary btn-sm">🔍 Filter</button>
-  </div>
+    <button class="btn btn-primary btn-sm">Filter</button>
+  </form>
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th>Customer</th><th>Loan Type</th><th style="text-align:right;">Principal</th><th style="text-align:right;">Remaining</th><th>Term</th><th>Status</th><th>Actions</th></tr></thead>
@@ -31,14 +32,7 @@
               </div></td>
             <td><%= l.term_months %> mo</td>
             <td><span class="status-badge status-<%= l.status %>"><%= l.status %></span></td>
-            <td>
-              <% if (l.status === 'pending') { %>
-                <form method="POST" action="/admin/approvals/loans/<%= l.id %>" style="display:inline;" onsubmit="return confirm('Approve and disburse loan #<%= l.id %>?');">
-                  <button class="btn btn-success btn-sm">✓</button>
-                </form>
-              <% } %>
-              <a href="/loans/<%= l.id %>" target="_blank" class="btn btn-light btn-sm">View</a>
-            </td>
+            <td><% if (l.status === 'pending') { %><a class="btn btn-primary btn-sm" href="/admin/approvals?section=loans">Review application</a><% } else { %><span class="status-badge">History retained</span><% } %></td>
           </tr>
         <% }) %>
       </tbody>
@@ -47,5 +41,3 @@
 </div>
 
 <%- include('../partials/layouts/admin-end') -%>
-
-

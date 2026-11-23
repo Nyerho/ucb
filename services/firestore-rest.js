@@ -9,8 +9,31 @@ let joseModulePromise;
 
 function envValue(name) {
   const value = getRuntimeEnv(name);
-  if (!value) throw new Error(`Missing required runtime binding: ${name}`);
-  return String(value);
+  if (value) return String(value);
+  const jsonField = {
+    FIREBASE_PROJECT_ID: 'project_id',
+    FIREBASE_CLIENT_EMAIL: 'client_email',
+    FIREBASE_PRIVATE_KEY: 'private_key'
+  }[name];
+  if (jsonField) {
+    const account = parseServiceAccountJson(getRuntimeEnv('FIREBASE_SERVICE_ACCOUNT_JSON'));
+    if (account && account[jsonField]) return String(account[jsonField]);
+  }
+  throw new Error(`Missing required runtime binding: ${name}`);
+}
+
+function parseServiceAccountJson(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  let account;
+  try {
+    account = typeof raw === 'object' ? raw : JSON.parse(String(raw));
+  } catch (_) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON must contain valid service-account JSON.');
+  }
+  if (!account || typeof account !== 'object' || Array.isArray(account)) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON must contain a JSON object.');
+  }
+  return account;
 }
 
 async function jose() {
@@ -309,5 +332,6 @@ module.exports = {
   fromFirestoreValue,
   decodeFields,
   buildStructuredQuery,
-  resetServiceTokenCacheForTests
+  resetServiceTokenCacheForTests,
+  parseServiceAccountJson
 };

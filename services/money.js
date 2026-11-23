@@ -16,6 +16,20 @@ function toMinorUnits(value) {
   return Number(signed);
 }
 
+function readMinorUnits(record, minorField, legacyField, fallback = 0) {
+  if (!record || typeof record !== 'object') return fallback;
+  if (Object.prototype.hasOwnProperty.call(record, minorField)) {
+    if (!Number.isSafeInteger(record[minorField])) {
+      throw new TypeError(`Stored ${minorField} must be a safe integer in minor units.`);
+    }
+    return record[minorField];
+  }
+  if (legacyField && record[legacyField] !== undefined && record[legacyField] !== null) {
+    return toMinorUnits(String(record[legacyField]));
+  }
+  return fallback;
+}
+
 function fromMinorUnits(value) {
   if (!Number.isSafeInteger(value)) throw new TypeError('Stored monetary values must be safe integer minor units.');
   return value / 100;
@@ -25,4 +39,4 @@ function formatMinorUnits(value, currency = 'AUD') {
   return new Intl.NumberFormat('en-AU', { style: 'currency', currency }).format(fromMinorUnits(value));
 }
 
-module.exports = { toMinorUnits, fromMinorUnits, formatMinorUnits };
+module.exports = { toMinorUnits, readMinorUnits, fromMinorUnits, formatMinorUnits };

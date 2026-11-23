@@ -4,7 +4,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { createFirestoreRepository } = require('../services/firestore-rest');
-const { toMinorUnits, fromMinorUnits } = require('../services/money');
+const { toMinorUnits, readMinorUnits, fromMinorUnits } = require('../services/money');
 const { requireAuth, requireVerified, getAccountStatusMessage } = require('../middleware/auth');
 const { sendTransactionActivityEmailById } = require('../services/email');
 
@@ -14,7 +14,10 @@ const repo = createFirestoreRepository();
 const OUTGOING_TYPES = new Set(['local_transfer', 'international_transfer', 'withdrawal', 'bill_payment', 'loan_payment']);
 const nowIso = () => new Date().toISOString();
 const sessionUid = req => String(req.session.userId);
-const asMinor = (account, key) => Number.isSafeInteger(account[`${key}_minor`]) ? account[`${key}_minor`] : 0;
+const asMinor = (account, key) => {
+  const balanceFallback = key === 'available_balance' ? readMinorUnits(account, 'balance_minor', 'balance') : 0;
+  return readMinorUnits(account, `${key}_minor`, key, balanceFallback);
+};
 
 function queueTransactionEmail(txnId, note) {
   if (!txnId) return;
@@ -46,7 +49,7 @@ async function getRecent(uid) {
   }));
 }
 function displayTransaction(t) {
-  return { ...t, amount: fromMinorUnits(t.amount_minor || 0), fee: fromMinorUnits(t.fee_minor || 0), converted_amount: t.converted_amount_minor === undefined ? undefined : fromMinorUnits(t.converted_amount_minor) };
+  return { ...t, amount: fromMinorUnits(readMinorUnits(t, 'amount_minor', 'amount')), fee: fromMinorUnits(readMinorUnits(t, 'fee_minor', 'fee')), converted_amount: t.converted_amount_minor === undefined && t.converted_amount === undefined ? undefined : fromMinorUnits(readMinorUnits(t, 'converted_amount_minor', 'converted_amount')) };
 }
 async function addNotification(uid, title, message, type) {
   await repo.create('notifications', { user_id: uid, title, message, type, is_read: false, created_at: nowIso() }, crypto.randomUUID());

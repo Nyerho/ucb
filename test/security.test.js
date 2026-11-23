@@ -70,6 +70,30 @@ test('production financial gate rejects mutating requests', async () => {
   assert.equal(res.headers['Cache-Control'], 'no-store');
 });
 
+test('production financial gate allows only exact safe admin mutation routes', () => {
+  const gate = require('../middleware/production-financial-gate');
+  const original = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  const invoke = (req) => {
+    let statusCode;
+    let continued = false;
+    const res = { setHeader() {}, status(code) { statusCode = code; return this; }, send() { return this; } };
+    gate(req, res, () => { continued = true; });
+    return { statusCode, continued };
+  };
+  for (const path of ['/users/customer1/update', '/users/create', '/users/customer1/accounts', '/accounts/acc1/balance-adjustment', '/cards/card1/status', '/approvals/kyc/record1/review']) {
+    const allowed = invoke({ method: 'POST', baseUrl: '/admin', path });
+    assert.equal(allowed.continued, true, `${path} should reach its validated handler`);
+  }
+  for (const path of ['/users/customer1/delete', '/accounts/adjust', '/accounts/1/balance', '/accounts/1/update/extra', '/approvals/unknown/item/review']) {
+    const blocked = invoke({ method: 'POST', baseUrl: '/admin', path });
+    assert.equal(blocked.statusCode, 503, `${path} should remain blocked`);
+    assert.equal(blocked.continued, false);
+  }
+  if (original === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = original;
+});
+
 test('production KYC gate rejects document submissions', () => {
   const gate = require('../middleware/production-pii-gate');
   const original = process.env.NODE_ENV;
@@ -89,7 +113,7 @@ test('production KYC gate rejects document submissions', () => {
   assert.equal(res.headers['Cache-Control'], 'no-store');
 });
 
-test('production serverless persistence gate allows only login among mutations and permits reads', () => {
+test('production serverless persistence gate allows login and exact safe admin mutations only', () => {
   const gate = require('../middleware/serverless-persistence-gate');
   const originalNodeEnv = process.env.NODE_ENV;
   const originalVercel = process.env.VERCEL;
@@ -110,7 +134,12 @@ test('production serverless persistence gate allows only login among mutations a
   const login = invoke({ method: 'POST', path: '/auth/login' });
   assert.equal(login.continued, true);
   assert.equal(login.statusCode, undefined);
-  for (const path of ['/auth/register', '/auth/forgot-password', '/transfers/local', '/admin/users']) {
+  for (const path of ['/admin/users/create', '/admin/users/customer1/update', '/admin/users/customer1/freeze', '/admin/users/customer1/unfreeze', '/admin/users/customer1/disable', '/admin/users/customer1/restore', '/admin/users/customer1/password-reset', '/admin/users/customer1/accounts', '/admin/accounts/acc1/update', '/admin/accounts/acc1/status', '/admin/accounts/acc1/balance-adjustment', '/admin/cards/card1/status', '/admin/approvals/transfers/txn1/review', '/admin/approvals/kyc/record1/review']) {
+    const safe = invoke({ method: 'POST', path });
+    assert.equal(safe.continued, true, `${path} should reach its validated handler`);
+    assert.equal(safe.statusCode, undefined);
+  }
+  for (const path of ['/auth/register', '/auth/forgot-password', '/transfers/local', '/admin/users', '/admin/users/customer1/delete', '/admin/accounts/adjust', '/admin/accounts/acc1/status/extra', '/admin/approvals/unknown/item/review']) {
     const blocked = invoke({ method: 'POST', path });
     assert.equal(blocked.statusCode, 503, `${path} should remain blocked`);
     assert.equal(blocked.continued, false, `${path} should not reach its handler`);
@@ -122,6 +151,33 @@ test('production serverless persistence gate allows only login among mutations a
   else process.env.NODE_ENV = originalNodeEnv;
   if (originalVercel === undefined) delete process.env.VERCEL;
   else process.env.VERCEL = originalVercel;
+});
+
+test('admin session preflight rejects missing encryption and proceeds when encryption is ready', async () => {
+  const middleware = require('../middleware/session-encryption-ready');
+  const session = require('../middleware/firebase-session');
+  const originalProbe = session.assertSessionEncryptionReady;
+  const originalError = console.error;
+  const makeResponse = () => ({ headers: {}, setHeader(name, value) { this.headers[name] = value; }, status(code) { this.statusCode = code; return this; }, send(body) { this.body = body; return this; } });
+  try {
+    console.error = () => {};
+    session.assertSessionEncryptionReady = async () => { throw new Error('missing test key'); };
+    const blockedRes = makeResponse();
+    let blockedNext = false;
+    await middleware({}, blockedRes, () => { blockedNext = true; });
+    assert.equal(blockedRes.statusCode, 503);
+    assert.equal(blockedRes.headers['Cache-Control'], 'no-store');
+    assert.equal(blockedNext, false);
+
+    session.assertSessionEncryptionReady = async () => true;
+    const readyRes = makeResponse();
+    let readyNext = false;
+    await middleware({}, readyRes, () => { readyNext = true; });
+    assert.equal(readyNext, true);
+  } finally {
+    session.assertSessionEncryptionReady = originalProbe;
+    console.error = originalError;
+  }
 });
 
 test('production serverless readiness endpoint reports durable storage blocker', async () => {

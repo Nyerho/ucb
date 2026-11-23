@@ -109,3 +109,13 @@ async function persistSession(req, res) {
 
 module.exports.COOKIE_NAME = COOKIE_NAME;
 module.exports.ONE_DAY_SECONDS = ONE_DAY_SECONDS;
+module.exports.assertSessionEncryptionReady = async function assertSessionEncryptionReady() {
+  const key = await encryptionKey();
+  const { EncryptJWT } = await jose();
+  await new EncryptJWT({ sessionReady: true })
+    .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
+    .setIssuedAt()
+    .setExpirationTime('1m')
+    .encrypt(key);
+  return true;
+};

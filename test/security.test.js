@@ -89,27 +89,35 @@ test('production KYC gate rejects document submissions', () => {
   assert.equal(res.headers['Cache-Control'], 'no-store');
 });
 
-test('production serverless persistence gate rejects every mutation but permits reads', () => {
+test('production serverless persistence gate allows only login among mutations and permits reads', () => {
   const gate = require('../middleware/serverless-persistence-gate');
   const originalNodeEnv = process.env.NODE_ENV;
   const originalVercel = process.env.VERCEL;
   process.env.NODE_ENV = 'production';
   process.env.VERCEL = '1';
-  let statusCode;
-  const res = {
-    headers: {},
-    setHeader(name, value) { this.headers[name] = value; },
-    status(code) { statusCode = code; return this; },
-    json(body) { this.body = body; return this; }
+  const invoke = (request) => {
+    let statusCode;
+    let continued = false;
+    const res = {
+      headers: {},
+      setHeader(name, value) { this.headers[name] = value; },
+      status(code) { statusCode = code; return this; },
+      json(body) { this.body = body; return this; }
+    };
+    gate(request, res, () => { continued = true; });
+    return { statusCode, continued, res };
   };
-  let continued = false;
-  gate({ method: 'POST' }, res, () => { continued = true; });
-  assert.equal(statusCode, 503);
-  assert.equal(continued, false);
-  assert.equal(res.headers['Cache-Control'], 'no-store');
-  continued = false;
-  gate({ method: 'GET' }, res, () => { continued = true; });
-  assert.equal(continued, true);
+  const login = invoke({ method: 'POST', path: '/auth/login' });
+  assert.equal(login.continued, true);
+  assert.equal(login.statusCode, undefined);
+  for (const path of ['/auth/register', '/auth/forgot-password', '/transfers/local', '/admin/users']) {
+    const blocked = invoke({ method: 'POST', path });
+    assert.equal(blocked.statusCode, 503, `${path} should remain blocked`);
+    assert.equal(blocked.continued, false, `${path} should not reach its handler`);
+    assert.equal(blocked.res.headers['Cache-Control'], 'no-store');
+  }
+  const read = invoke({ method: 'GET', path: '/admin/dashboard' });
+  assert.equal(read.continued, true);
   if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = originalNodeEnv;
   if (originalVercel === undefined) delete process.env.VERCEL;

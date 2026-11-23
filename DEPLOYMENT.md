@@ -4,7 +4,7 @@
 
 The repository is prepared for a Cloudflare Worker build and a protected preview. No Cloudflare deployment was triggered from this task. The `wrangler.toml` Worker name now matches the CI name `ucb`, and its custom build hook precompiles all EJS templates before Wrangler packages the Worker. The templates are included as read-only text modules so Express can locate them; the Worker renderer uses the generated registry instead of runtime `new Function` evaluation. Routes are statically imported for Wrangler compatibility.
 
-This preparation does not make UCB production-ready for financial services. The production Worker intentionally rejects all mutating requests with HTTP 503, and `/api/health` intentionally reports `not_ready` with reason `durable_store_unconfigured`. Keep these gates enabled. Login, registration, and other form submissions are unavailable in this protected preview; do not submit real financial information, identity documents, or credentials.
+This preparation does not make UCB production-ready for financial services. The production Worker allows only `POST /auth/login` so existing Firebase users can authenticate; registration, password reset, and all other mutating requests remain blocked with HTTP 503. `/api/health` intentionally reports `not_ready` with reason `durable_store_unconfigured`. A successful admin login grants read access to customer, account, transaction, and KYC records, so use only an approved non-production Firebase project with synthetic data. Do not enable real transfers, payments, or identity-document workflows.
 
 ## Cloudflare Workers Builds settings
 
@@ -29,7 +29,7 @@ npm test
 npm run build:worker
 ```
 
-For a local Worker runtime smoke test, run `NODE_ENV=production npx wrangler dev --local`, then check a rendered page such as `/contact`, a static asset such as `/css/style.css`, `/api/health`, and a harmless POST. The expected protected-preview behavior is a successful rendered/static response, a `503` health response, and a `503` mutation response.
+For a local Worker runtime smoke test, run `NODE_ENV=production npx wrangler dev --local` using a synthetic Firebase account, then check a rendered page such as `/contact`, a static asset such as `/css/style.css`, `/api/health`, and a harmless POST to a non-login route. Expected behavior: rendered/static responses succeed, login is handled by Firebase, health returns `503`, and all non-login mutations return `503`.
 
 Wrangler’s custom build command runs before both `wrangler dev` and `wrangler deploy`; Workers Builds’ separate Build command is optional. See Cloudflare’s [Wrangler custom builds](https://developers.cloudflare.com/workers/wrangler/custom-builds/) and [Workers Builds configuration](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/).
 

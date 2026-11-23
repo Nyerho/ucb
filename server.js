@@ -4,8 +4,36 @@ const express = require('express');
 const Layer = require('express/lib/router/layer');
 const path = require('path');
 const cookieParser = require('cookie-parser');
+const ejs = require('ejs');
 const moment = require('moment');
 const { getRuntimeEnv } = require('./lib/runtime-env');
+const IS_WORKER_RUNTIME = getRuntimeEnv('WORKER_RUNTIME') === '1';
+const VIEWS_DIR = IS_WORKER_RUNTIME ? '/bundle' : path.join(__dirname, 'views');
+const workerViewTemplates = IS_WORKER_RUNTIME ? require('./lib/worker-views.generated.cjs') : null;
+
+function renderWorkerTemplate(viewName, locals) {
+  const template = workerViewTemplates[viewName];
+  if (typeof template !== 'function') throw new Error(`Unknown Worker view: ${viewName}`);
+  const include = (requestedPath, includeLocals = {}) => {
+    const request = String(requestedPath);
+    if (path.posix.isAbsolute(request)) throw new Error('Absolute EJS includes are not supported in Workers.');
+    let includedName = path.posix.normalize(path.posix.join(path.posix.dirname(viewName), request));
+    if (includedName === '..' || includedName.startsWith('../')) throw new Error('EJS include path escapes the Worker views directory.');
+    includedName = includedName.replace(/\.ejs$/, '');
+    return renderWorkerTemplate(includedName, { ...locals, ...(includeLocals || {}) });
+  };
+  return template(locals || {}, ejs.escapeXML, include);
+}
+
+function workerViewEngine(filename, options, callback) {
+  try {
+    const relativePath = path.relative(VIEWS_DIR, filename).split(path.sep).join('/');
+    const viewName = relativePath.replace(/\.ejs$/, '');
+    callback(null, renderWorkerTemplate(viewName, options || {}));
+  } catch (error) {
+    callback(error);
+  }
+}
 
 const originalLayerHandleRequest = Layer.prototype.handle_request;
 Layer.prototype.handle_request = function patchedAsyncHandleRequest(req, res, next) {
@@ -22,8 +50,9 @@ Layer.prototype.handle_request = function patchedAsyncHandleRequest(req, res, ne
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+app.engine('ejs', IS_WORKER_RUNTIME ? workerViewEngine : ejs.renderFile);
 app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, 'views'));
+app.set('views', VIEWS_DIR);
 app.set('trust proxy', 1);
 
 app.use((req, res, next) => {
@@ -63,7 +92,7 @@ app.use(async (req, res, next) => {
 app.use(cookieParser());
 app.use(cookieParser());
 app.use('/uploads/kyc', (_req, res) => res.status(404).end());
-if (getRuntimeEnv('WORKER_RUNTIME') !== '1') app.use(express.static(path.join(__dirname, 'public')));
+if (!IS_WORKER_RUNTIME) app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(require('./middleware/firebase-session'));
 app.use(require('./middleware/firebase-authenticated-user'));
@@ -116,13 +145,17 @@ app.use((req, res, next) => {
 // Keep write paths unavailable until financial and identity-document controls have passed review.
 app.use(require('./middleware/serverless-persistence-gate'));
 
-const routes = [
-  ['/', './routes/index'], ['/auth', './routes/auth'], ['/user', './routes/user'],
-  ['/accounts', './routes/accounts'], ['/transfers', './routes/transfers'], ['/cards', './routes/cards'],
-  ['/loans', './routes/loans'], ['/kyc', './routes/kyc'], ['/billpay', './routes/billpay'],
-  ['/admin', './routes/admin'], ['/api', './routes/api']
-];
-for (const [base, modulePath] of routes) app.use(base, require(modulePath));
+app.use('/', require('./routes/index'));
+app.use('/auth', require('./routes/auth'));
+app.use('/user', require('./routes/user'));
+app.use('/accounts', require('./routes/accounts'));
+app.use('/transfers', require('./routes/transfers'));
+app.use('/cards', require('./routes/cards'));
+app.use('/loans', require('./routes/loans'));
+app.use('/kyc', require('./routes/kyc'));
+app.use('/billpay', require('./routes/billpay'));
+app.use('/admin', require('./routes/admin'));
+app.use('/api', require('./routes/api'));
 
 app.use((req, res) => res.status(404).render('errors/404', { title: 'Page Not Found - United Credit Bank', page: '404' }));
 app.use((err, req, res, next) => {

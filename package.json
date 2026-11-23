@@ -8,10 +8,12 @@
     "dev": "node --watch server.js",
     "test": "node --test",
     "preview": "wrangler dev --local",
+    "compile:worker-views": "node scripts/compile-worker-views.js",
     "build:worker": "wrangler deploy --dry-run --outdir .worker-dist",
     "postinstall": "patch-package"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.6",
     "ejs": "^3.1.10",
     "express": "^4.22.3",
@@ -24,6 +26,9 @@
     "node": "22.x"
   },
   "devDependencies": {
+    "acorn": "^8.19.0",
+    "eslint-scope": "^9.1.2",
+    "globals": "^17.14.0",
     "patch-package": "^8.0.1",
     "wrangler": "^4.166.0"
   }

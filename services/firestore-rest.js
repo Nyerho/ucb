@@ -161,7 +161,10 @@ async function firestoreRequest(path, { method = 'GET', body, query } = {}) {
   const result = await response.json().catch(() => null);
   if (!response.ok) {
     const code = result && result.error && result.error.status;
-    const error = new Error(`Firestore request failed (${code || response.status}).`);
+    const detail = result && result.error && typeof result.error.message === 'string'
+      ? result.error.message.replace(/\s+/g, ' ').trim().slice(0, 400)
+      : '';
+    const error = new Error(`Firestore request failed (${code || response.status})${detail ? `: ${detail}` : ''}.`);
     error.status = response.status;
     error.code = code || 'FIRESTORE_ERROR';
     throw error;

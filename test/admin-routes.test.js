@@ -82,10 +82,12 @@ test('admin dashboard renders an admins-only identity from the verified request 
     FIREBASE_PRIVATE_KEY: privateKey
   });
   resetServiceTokenCacheForTests();
-  global.fetch = async input => {
+  const queryBodies = [];
+  global.fetch = async (input, options = {}) => {
     if (String(input).startsWith('https://oauth2.googleapis.com/token')) {
       return { ok: true, status: 200, json: async () => ({ access_token: 'test-access-token', expires_in: 3600 }) };
     }
+    if (String(input).includes(':runQuery')) queryBodies.push(JSON.parse(options.body).structuredQuery);
     return { ok: true, status: 200, json: async () => [] };
   };
 
@@ -102,6 +104,12 @@ test('admin dashboard renders an admins-only identity from the verified request 
     assert.equal(res.view, 'admin/dashboard');
     assert.equal(res.locals.user, admin);
     assert.equal(res.locals.user.first_name, 'System');
+    for (const collectionId of ['kyc', 'bill_payments']) {
+      const query = queryBodies.find(item => item.from[0].collectionId === collectionId);
+      assert.ok(query, `expected a query for ${collectionId}`);
+      assert.equal(query.where.fieldFilter.field.fieldPath, 'status');
+      assert.equal(query.orderBy, undefined);
+    }
   } finally {
     global.fetch = previousFetch;
     for (const name of envNames) {

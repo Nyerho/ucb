@@ -78,7 +78,10 @@ router.get('/dashboard', async (req, res, next) => {
   try {
     const [users, accounts, transactions, cards, loans, kyc, bills] = await Promise.all([
       rows('users', [], 'created_at', 1000), rows('accounts', [], 'created_at', 1000), rows('transactions', [], 'created_at', 1000),
-      rows('cards', [], 'created_at', 1000), rows('loans', [], 'created_at', 1000), rows('kyc', [{ field: 'status', value: 'pending' }], 'submitted_at', 1000), rows('bill_payments', [{ field: 'status', value: 'pending' }], 'created_at', 1000)
+      rows('cards', [], 'created_at', 1000), rows('loans', [], 'created_at', 1000),
+      // These are counts only; filter by status without orderBy to avoid composite indexes.
+      repo.list('kyc', [{ field: 'status', value: 'pending' }], { limit: 1000 }),
+      repo.list('bill_payments', [{ field: 'status', value: 'pending' }], { limit: 1000 })
     ]);
     const customers = users.filter(u => !isAdminUser(u) || accounts.some(a => a.user_id === u.id && a.account_type !== 'Admin Account'));
     const recentTransactions = await Promise.all(transactions.slice(0, 10).map(async t => { const [u,a] = await Promise.all([getUser(t.user_id),repo.get('accounts',id(t.account_id))]); return { ...display(t), first_name:u?.first_name||'',last_name:u?.last_name||'',account_name:a?.account_name||'' }; }));

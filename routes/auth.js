@@ -1,13 +1,14 @@
 const express = require('express');
 const crypto = require('crypto');
 const { body, validationResult } = require('express-validator');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, isAdminUser } = require('../middleware/auth');
 const { createFirestoreRepository } = require('../services/firestore-rest');
 const firebaseAuth = require('../services/firebase-auth-rest');
 const { sendAccountWelcomeEmail, sendLoginWelcomeEmail } = require('../services/email');
 const requireSessionEncryptionReady = require('../middleware/session-encryption-ready');
 const router = express.Router();
 const repo = createFirestoreRepository();
+const { getAuthenticatedProfile } = require('../services/authenticated-profile');
 const nowIso = () => new Date().toISOString();
 const clean = value => String(value || '').trim();
 function sessionTokens(req, auth) {
@@ -71,14 +72,28 @@ router.post('/login', requireSessionEncryptionReady, async (req, res) => {
   if (!email || !password) { req.session.error = 'Email and password are required.'; return res.redirect('/auth/login'); }
   try {
     const auth = await firebaseAuth.signInWithPassword(email, password), uid = String(auth.localId);
-    const user = await repo.get('users', uid);
+    const user = await getAuthenticatedProfile(repo, uid);
     if (!user) { req.session.error = 'Invalid email or password.'; return res.redirect('/auth/login'); }
-    if (user.is_frozen === true || Number(user.is_frozen) === 1) { req.session.error = 'Your account has been frozen. Please contact customer support.'; return res.redirect('/auth/login'); }
+    if (user.disabled === true || user.active === false || user.is_frozen === true || Number(user.is_frozen) === 1) {
+      req.session.error = 'Your account is unavailable. Please contact support.';
+      return res.redirect('/auth/login');
+    }
     sessionTokens(req, auth);
     req.session.userId = uid;
-    req.session.user = { id: uid, first_name: user.first_name || '', last_name: user.last_name || '', email: user.email || email, profile_image: user.profile_image || '', is_admin: Number(user.is_admin) === 1 ? 1 : 0, is_verified: Number(user.is_verified) === 1 ? 1 : 0, is_frozen: Number(user.is_frozen) === 1 ? 1 : 0 };
+    req.session.user = {
+      id: uid,
+      first_name: user.first_name || '',
+      last_name: user.last_name || '',
+      email: user.email || email,
+      profile_image: user.profile_image || '',
+      is_admin: isAdminUser(user) ? 1 : 0,
+      is_super_admin: user.is_super_admin === true || user.role === 'super_admin',
+      role: user.role || 'customer',
+      is_verified: Number(user.is_verified) === 1 ? 1 : 0,
+      is_frozen: Number(user.is_frozen) === 1 ? 1 : 0
+    };
     sendLoginWelcomeEmail(user, { ip: req.ip, userAgent: req.get('user-agent') }).catch(error => console.error('Login email failed:', error));
-    return res.redirect(req.session.user.is_admin ? '/admin/dashboard' : '/user/dashboard');
+    return res.redirect(isAdminUser(user) ? '/admin/dashboard' : '/user/dashboard');
   } catch (error) {
     console.error('Login failed:', error);
     req.session.error = error.message || 'Authentication is temporarily unavailable.';

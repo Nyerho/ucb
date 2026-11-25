@@ -26,7 +26,7 @@ function requireVerified(req, res, next) {
 }
 
 function isAdminUser(user) {
-  return Boolean(user && (user.is_admin === true || Number(user.is_admin) === 1 || user.role === 'admin' || user.role === 'super_admin'));
+  return Boolean(user && (user.is_admin === true || Number(user.is_admin) === 1 || user.is_super_admin === true || user.role === 'admin' || user.role === 'super_admin'));
 }
 
 function requireAdmin(req, res, next) {

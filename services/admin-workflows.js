@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const { getRuntimeEnv } = require('../lib/runtime-env');
 const { toMinorUnits, readMinorUnits } = require('./money');
+const { explicitAdminRole } = require('./authenticated-profile');
 
 const PROFILE_FIELDS = new Set(['first_name', 'last_name', 'phone', 'address', 'city', 'state', 'postcode']);
 const ACCOUNT_METADATA_FIELDS = new Set(['account_name', 'branch']);
@@ -165,8 +166,27 @@ function boolFlag(value) {
 }
 
 async function requireCurrentAdmin(tx, actorId) {
-  const actor = await tx.get('users', actorId);
-  const isAdmin = actor && (boolFlag(actor.is_admin) || actor.role === 'admin' || actor.role === 'super_admin');
+  const userProfile = await tx.get('users', actorId);
+  const adminProfile = await tx.get('admins', actorId);
+  if (adminProfile) {
+    const role = explicitAdminRole(adminProfile);
+    const blocked = boolFlag(adminProfile.disabled) || boolFlag(adminProfile.is_frozen)
+      || boolFlag(userProfile && userProfile.disabled) || boolFlag(userProfile && userProfile.is_frozen);
+    if (adminProfile.active !== true || !role || blocked) {
+      throw workflowError('Administrator permissions are no longer active.', 403);
+    }
+    return {
+      ...(userProfile || {}),
+      ...adminProfile,
+      id: actorId,
+      role,
+      is_admin: 1,
+      is_super_admin: role === 'super_admin'
+    };
+  }
+
+  const actor = userProfile;
+  const isAdmin = actor && (boolFlag(actor.is_admin) || actor.is_super_admin === true || actor.role === 'admin' || actor.role === 'super_admin');
   if (!isAdmin || boolFlag(actor.disabled) || boolFlag(actor.is_frozen)) {
     throw workflowError('Administrator permissions are no longer active.', 403);
   }

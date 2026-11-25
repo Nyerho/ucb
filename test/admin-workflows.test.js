@@ -2,10 +2,10 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createAdminWorkflows, normalizeUserProfile, normalizeAccountMetadata } = require('../services/admin-workflows');
 
-function fakeRepository(initial) {
+function fakeRepository(initial, { seedDefaultAdmin = true } = {}) {
   let store = structuredClone(initial);
   store.users ||= {};
-  if (!store.users.admin1) store.users.admin1 = { id: 'admin1', is_admin: 1 };
+  if (seedDefaultAdmin && !store.users.admin1) store.users.admin1 = { id: 'admin1', is_admin: 1 };
   return {
     data: () => structuredClone(store),
     async runTransaction(callback) {
@@ -151,6 +151,36 @@ test('each transaction rejects writes after the acting administrator is demoted'
   const workflows = createAdminWorkflows(repo, makeOptions());
   await repo.runTransaction(async tx => tx.update('users', 'admin1', { is_admin: 0 }));
   await assert.rejects(() => workflows.changeAccountStatus({ actorId: 'admin1', accountId: '1', status: 'frozen', reason: 'Customer reported stolen credentials' }), /Administrator permissions are no longer active/);
+  assert.equal(repo.data().accounts['1'].status, 'active');
+  assert.deepEqual(repo.data().audit_logs || {}, {});
+});
+
+test('transactional admin writes accept an active super_admin record keyed by Firebase UID', async () => {
+  const repo = fakeRepository({
+    admins: { admin1: { active: true, role: 'super_admin', is_super_admin: true } },
+    accounts: { '1': { id: '1', status: 'active' } }
+  }, { seedDefaultAdmin: false });
+  const workflows = createAdminWorkflows(repo, makeOptions());
+
+  const result = await workflows.changeAccountStatus({
+    actorId: 'admin1', accountId: '1', status: 'frozen', reason: 'Customer reported stolen credentials'
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(repo.data().accounts['1'].status, 'frozen');
+  assert.equal(Object.values(repo.data().audit_logs)[0].admin_id, 'admin1');
+});
+
+test('inactive admins record blocks transactional writes even if a duplicate users profile has admin privileges', async () => {
+  const repo = fakeRepository({
+    admins: { admin1: { active: false, role: 'super_admin', is_super_admin: true } },
+    accounts: { '1': { id: '1', status: 'active' } }
+  });
+  const workflows = createAdminWorkflows(repo, makeOptions());
+
+  await assert.rejects(() => workflows.changeAccountStatus({
+    actorId: 'admin1', accountId: '1', status: 'frozen', reason: 'Customer reported stolen credentials'
+  }), /Administrator permissions are no longer active/);
   assert.equal(repo.data().accounts['1'].status, 'active');
   assert.deepEqual(repo.data().audit_logs || {}, {});
 });

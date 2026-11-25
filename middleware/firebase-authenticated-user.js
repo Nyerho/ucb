@@ -2,6 +2,7 @@
 
 const { verifyFirebaseIdToken, refreshFirebaseToken } = require('../services/firebase-auth-rest');
 const { createFirestoreRepository } = require('../services/firestore-rest');
+const { getAuthenticatedProfile } = require('../services/authenticated-profile');
 
 const repository = createFirestoreRepository();
 const REFRESH_WINDOW_SECONDS = 180;
@@ -32,8 +33,8 @@ module.exports = async function firebaseAuthenticatedUser(req, res, next) {
       claims = await verifyFirebaseIdToken(idToken);
     }
 
-    const profile = await repository.get('users', claims.uid);
-    if (!profile || profile.disabled === true || Number(profile.is_frozen) === 1) {
+    const profile = await getAuthenticatedProfile(repository, claims.uid);
+    if (!profile || profile.disabled === true || profile.active === false || profile.is_frozen === true || Number(profile.is_frozen) === 1) {
       delete req.session.firebaseIdToken;
       delete req.session.firebaseRefreshToken;
       delete req.session.firebaseExpiresAt;

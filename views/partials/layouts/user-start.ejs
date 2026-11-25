@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/css/style.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=''http://www.w3.org/2000/svg'' viewBox=''0 0 100 100''><rect width=''100'' height=''100'' rx=''20'' fill=''%23C8102E''/><text x=''50'' y=''62'' font-size=''48'' font-family=''Arial'' font-weight=''800'' text-anchor=''middle'' fill=''white''>U</text></svg>">
   <script>
-    window.__FIREBASE_CONFIG__ = <%- JSON.stringify(firebaseWebConfig) %>;
+    window.__FIREBASE_CONFIG__ = <%- JSON.stringify(typeof firebaseWebConfig === 'undefined' ? null : firebaseWebConfig) %>;
   </script>
   <script type="module" src="/js/firebase-config.js"></script>
 </head>

@@ -144,7 +144,7 @@
             <%= isOut ? '→' : '←' %>
           </div>
           <div style="flex:1;min-width:0;">
-            <div style="font-weight:600;font-size:0.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><%= tx.recipient_name || tx.description || tx.transaction_type.replace(/_/g,' ') %></div>
+            <div style="font-weight:600;font-size:0.92rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><%= tx.recipient_name || tx.description || String(tx.transaction_type || 'Transaction').replace(/_/g,' ') %></div>
             <div style="font-size:0.78rem;color:var(--text-light);">
               TX-<%= String(tx.id).padStart(6, '0') %> • <%= moment(tx.created_at).format('DD MMM HH:mm') %>
             </div>

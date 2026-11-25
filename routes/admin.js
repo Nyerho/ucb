@@ -96,7 +96,7 @@ router.get('/dashboard', async (req, res, next) => {
     const audTodays = todays.filter(transaction => String(transaction.currency || 'AUD').toUpperCase() === 'AUD');
     const todayVolume = audTodays.reduce((sum, transaction) => sum + Math.abs(readMinorUnits(transaction, 'amount_minor', 'amount')), 0) / 100;
     const stats = { totalUsers:customers.length,totalCustomers:customers.length,totalAccounts:accounts.length,activeAccounts:accounts.filter(a=>String(a.status||'active').toLowerCase()==='active').length,totalCards:cards.length,totalLoans:loans.length,pendingKYC:kyc.length,pendingTransfers:transactions.filter(t=>t.status==='pending').length,pendingCards:cards.filter(c=>c.status==='pending').length,pendingLoans:loans.filter(l=>l.status==='pending').length,pendingBills:bills.length,frozenAccounts:users.filter(u=>u.is_frozen).length,totalBalance:total(audAccounts,'balance'),loansDisbursed:total(loans.filter(l=>l.status==='disbursed'),'loan_amount'),totalLoansOutstanding:total(loans.filter(l=>l.status==='disbursed'),'remaining_balance'),recentUsers,recentTransactions,todayTransactions:todays.length,todayVolume,newThisWeek,activeCards:cards.filter(c=>c.status==='active').length,activeLoans:loans.filter(l=>l.status==='disbursed').length,unverifiedCustomers:customers.filter(u=>!u.is_verified).length };
-    const admin=await getUser(req.session.userId);
+    const admin=req.user;
     res.render('admin/dashboard',{title:'Admin Dashboard - United Credit Bank',page:'admin-dashboard',admin,user:admin,stats,pendingCount:stats.pendingKYC+stats.pendingTransfers+stats.pendingCards+stats.pendingLoans+stats.pendingBills,recentUsers,recentTransactions});
   } catch(e){next(e);}
 });

@@ -1,8 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const router = require('../routes/admin');
 const { requireAdmin, isAdminUser } = require('../middleware/auth');
 const requireSessionEncryptionReady = require('../middleware/session-encryption-ready');
+const { resetServiceTokenCacheForTests } = require('../services/firestore-rest');
 
 test('admin router registers only the reviewed safe POST handlers', () => {
   const writes = router.stack.filter(layer => layer.route && layer.route.methods.post);
@@ -63,6 +65,51 @@ test('Firebase customer-creation failures redirect to the creation form without 
   }
   assert.equal(res.location, '/admin/users/create');
   assert.match(req.session.error, /change could not be confirmed/);
+});
+
+test('admin dashboard renders an admins-only identity from the verified request profile', async () => {
+  const privateKey = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    publicKeyEncoding: { type: 'spki', format: 'pem' }
+  }).privateKey;
+  const envNames = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'];
+  const previousEnv = Object.fromEntries(envNames.map(name => [name, process.env[name]]));
+  const previousFetch = global.fetch;
+  Object.assign(process.env, {
+    FIREBASE_PROJECT_ID: 'ucb-dashboard-test',
+    FIREBASE_CLIENT_EMAIL: 'worker-test@example.invalid',
+    FIREBASE_PRIVATE_KEY: privateKey
+  });
+  resetServiceTokenCacheForTests();
+  global.fetch = async input => {
+    if (String(input).startsWith('https://oauth2.googleapis.com/token')) {
+      return { ok: true, status: 200, json: async () => ({ access_token: 'test-access-token', expires_in: 3600 }) };
+    }
+    return { ok: true, status: 200, json: async () => [] };
+  };
+
+  const layer = router.stack.find(item => item.route && item.route.path === '/dashboard' && item.route.methods.get);
+  const handler = layer.route.stack.at(-1).handle;
+  const admin = { id: 'admin-only-uid', first_name: 'System', role: 'super_admin', is_admin: 1 };
+  const req = { user: admin, session: { userId: admin.id } };
+  const res = { render(view, locals) { this.view = view; this.locals = locals; return this; } };
+  let nextError;
+
+  try {
+    await handler(req, res, error => { nextError = error; });
+    assert.equal(nextError, undefined);
+    assert.equal(res.view, 'admin/dashboard');
+    assert.equal(res.locals.user, admin);
+    assert.equal(res.locals.user.first_name, 'System');
+  } finally {
+    global.fetch = previousFetch;
+    for (const name of envNames) {
+      if (previousEnv[name] === undefined) delete process.env[name];
+      else process.env[name] = previousEnv[name];
+    }
+    resetServiceTokenCacheForTests();
+  }
 });
 
 test('admin guard accepts administrator and super_admin Firebase profiles but rejects customers', () => {

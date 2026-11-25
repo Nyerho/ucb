@@ -134,12 +134,15 @@ test('production serverless persistence gate allows login and exact safe admin m
   const login = invoke({ method: 'POST', path: '/auth/login' });
   assert.equal(login.continued, true);
   assert.equal(login.statusCode, undefined);
+  const passwordReset = invoke({ method: 'POST', path: '/auth/forgot-password' });
+  assert.equal(passwordReset.continued, true);
+  assert.equal(passwordReset.statusCode, undefined);
   for (const path of ['/admin/users/create', '/admin/users/customer1/update', '/admin/users/customer1/freeze', '/admin/users/customer1/unfreeze', '/admin/users/customer1/disable', '/admin/users/customer1/restore', '/admin/users/customer1/password-reset', '/admin/users/customer1/accounts', '/admin/accounts/acc1/update', '/admin/accounts/acc1/status', '/admin/accounts/acc1/balance-adjustment', '/admin/cards/card1/status', '/admin/approvals/transfers/txn1/review', '/admin/approvals/kyc/record1/review']) {
     const safe = invoke({ method: 'POST', path });
     assert.equal(safe.continued, true, `${path} should reach its validated handler`);
     assert.equal(safe.statusCode, undefined);
   }
-  for (const path of ['/auth/register', '/auth/forgot-password', '/transfers/local', '/admin/users', '/admin/users/customer1/delete', '/admin/accounts/adjust', '/admin/accounts/acc1/status/extra', '/admin/approvals/unknown/item/review']) {
+  for (const path of ['/auth/register', '/auth/reset-password', '/auth/forgot-password/extra', '/transfers/local', '/admin/users', '/admin/users/customer1/delete', '/admin/accounts/adjust', '/admin/accounts/acc1/status/extra', '/admin/approvals/unknown/item/review']) {
     const blocked = invoke({ method: 'POST', path });
     assert.equal(blocked.statusCode, 503, `${path} should remain blocked`);
     assert.equal(blocked.continued, false, `${path} should not reach its handler`);
@@ -151,6 +154,14 @@ test('production serverless persistence gate allows login and exact safe admin m
   else process.env.NODE_ENV = originalNodeEnv;
   if (originalVercel === undefined) delete process.env.VERCEL;
   else process.env.VERCEL = originalVercel;
+});
+
+test('forgot-password email route requires encrypted-session readiness before dispatch', () => {
+  const authRouter = require('../routes/auth');
+  const sessionPreflight = require('../middleware/session-encryption-ready');
+  const resetRoute = authRouter.stack.find(layer => layer.route && layer.route.path === '/forgot-password' && layer.route.methods.post);
+  assert.ok(resetRoute);
+  assert.equal(resetRoute.route.stack[0].handle, sessionPreflight);
 });
 
 test('admin session preflight rejects missing encryption and proceeds when encryption is ready', async () => {

@@ -105,7 +105,7 @@ router.get('/logout', requireAuth, (req, res) => {
   req.session = null; res.clearCookie('ucb_session'); res.redirect('/');
 });
 router.get('/forgot-password', (req, res) => res.render('auth/forgot', { title: 'Forgot Password - United Credit Bank', page: 'forgot' }));
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', requireSessionEncryptionReady, async (req, res) => {
   const email = clean(req.body.email).toLowerCase();
   if (email) { try { await firebaseAuth.sendPasswordResetEmail(email); } catch (error) { console.error('Password reset request failed:', error); } }
   req.session.success = 'If your email is registered, you will receive password reset instructions shortly.';

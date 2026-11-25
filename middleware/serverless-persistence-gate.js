@@ -7,8 +7,9 @@ module.exports = function serverlessPersistenceGate(req, res, next) {
   const isServerless = Boolean(getRuntimeEnv('WORKER_RUNTIME') === '1' || process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
   const isMutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
   const requestPath = getRequestPath(req);
-  const isLoginSubmission = req.method === 'POST' && requestPath === '/auth/login';
-  if (process.env.NODE_ENV === 'production' && isServerless && isMutation && !isLoginSubmission && !isSafeAdminMutation(req)) {
+  const isAllowedAuthSubmission = req.method === 'POST'
+    && (requestPath === '/auth/login' || requestPath === '/auth/forgot-password');
+  if (process.env.NODE_ENV === 'production' && isServerless && isMutation && !isAllowedAuthSubmission && !isSafeAdminMutation(req)) {
     res.setHeader('Cache-Control', 'no-store');
     return res.status(503).json({
       error: 'Writes are temporarily disabled until Firebase security and production workflow gates are approved.'

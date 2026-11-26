@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#C8102E">
+  <title><%= typeof title !== 'undefined' && title ? title : 'Service temporarily unavailable' %></title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <main class="container" style="min-height:70vh;display:flex;align-items:center;justify-content:center;padding:32px 16px;">
+    <section class="card" style="max-width:640px;width:100%;padding:32px;text-align:center;">
+      <p class="section-eyebrow">Service unavailable</p>
+      <h1 style="margin:12px 0 16px;"><%= typeof title !== 'undefined' && title ? title : 'Please try again shortly' %></h1>
+      <p class="hero-subtitle" style="margin:0 auto 24px;"><%= typeof message !== 'undefined' && message ? message : 'This service is temporarily unavailable. Please try again shortly.' %></p>
+      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+        <a href="/auth/login" class="btn btn-primary">Return to sign in</a>
+        <a href="/" class="btn btn-outline">Back to home</a>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

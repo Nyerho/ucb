@@ -55,7 +55,9 @@ function outgoing(tx) { return completed(tx) && (tx.transaction_type === 'admin_
 function creditTotal(rows) { return rows.reduce((n, tx) => n + (incoming(tx) ? Math.abs(amount(tx, 'amount')) : 0), 0); }
 function debitTotal(rows) { return rows.reduce((n, tx) => n + (outgoing(tx) ? Math.abs(amount(tx, 'amount')) + Math.abs(amount(tx, 'fee')) : 0), 0); }
 function renderError(res, error) {
-  console.error('User route Firestore operation failed:', error);
+  const status = Number.isInteger(error?.status) ? error.status : 'unknown';
+  const code = typeof error?.code === 'string' && /^[A-Z_]+$/.test(error.code) ? error.code : 'unknown';
+  console.error(`User route Firestore operation failed (status=${status}, code=${code}).`);
   return res.status(503).render('error', { message: 'This service is temporarily unavailable.' });
 }
 

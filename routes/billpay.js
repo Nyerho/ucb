@@ -6,18 +6,20 @@ const { requireAuth, requireVerified, getAccountStatusMessage } = require('../mi
 const { createFirestoreRepository } = require('../services/firestore-rest');
 const { toMinorUnits, readMinorUnits, fromMinorUnits } = require('../services/money');
 const { sendTransactionActivityEmailById } = require('../services/email');
+const { ownerIdsForRequest, listByOwnerIds, recordHasOwnerId } = require('../services/owner-records');
 
 const router = express.Router();
 const repo = createFirestoreRepository();
 router.use(require('../middleware/production-financial-gate'));
 
-function queueTransactionEmail(txnId, note) {
+function queueTransactionEmail(txnId, note, authenticatedUser) {
   if (!txnId) return;
-  sendTransactionActivityEmailById(txnId, note ? { note } : {}).catch((error) => {
+  sendTransactionActivityEmailById(txnId, { ...(note ? { note } : {}), authenticatedUser }).catch((error) => {
     console.error(`Failed to send transaction email for txn ${txnId}:`, error);
   });
 }
 function userId(req) { return String(req.session.userId); }
+function ownerIds(req) { return ownerIdsForRequest(req); }
 function amountMinor(doc, key = 'amount_minor') {
   return readMinorUnits(doc, key, key.replace('_minor', ''));
 }
@@ -38,7 +40,7 @@ function paymentForView(payment, account) {
 function txnForView(txn) { return { ...txn, amount: displayAmount(txn) }; }
 function newId() { return crypto.randomUUID(); }
 async function userAccounts(uid, operableOnly = false) {
-  const rows = await repo.list('accounts', [{ field: 'user_id', value: uid }]);
+  const rows = await listByOwnerIds(repo, 'accounts', uid);
   return rows.filter(a => !operableOnly || !['frozen', 'closed', 'restricted'].includes(String(a.status || '').toLowerCase())).map(accountForView);
 }
 async function addNotice(uid, title, message, type) {
@@ -47,7 +49,7 @@ async function addNotice(uid, title, message, type) {
 async function accountOwned(tx, accountId, uid) {
   if (!accountId || typeof accountId !== 'string') return null;
   const account = await tx.get('accounts', accountId);
-  return account && account.user_id === uid ? account : null;
+  return recordHasOwnerId(account, uid) ? account : null;
 }
 function balanceMinor(account, field) {
   const fallback = field === 'available_balance' ? readMinorUnits(account, 'balance_minor', 'balance') : 0;
@@ -90,8 +92,9 @@ const BILLERS = [
 
 router.get('/', requireAuth, requireVerified, async (req, res) => {
   try {
-    const rows = await repo.list('bill_payments', [{ field: 'user_id', value: userId(req) }], { orderBy: { field: 'created_at', direction: 'desc' }, limit: 50 });
-    const payments = await Promise.all(rows.map(async p => paymentForView(p, await repo.get('accounts', p.account_id))));
+    const owners = ownerIds(req);
+    const rows = await listByOwnerIds(repo, 'bill_payments', owners, [], { orderBy: { field: 'created_at', direction: 'desc' }, limit: 50 });
+    const payments = await Promise.all(rows.map(async p => { const account = await repo.get('accounts', p.account_id); return paymentForView(p, recordHasOwnerId(account, owners) ? account : null); }));
     const upcoming = payments.filter(p => p.status === 'scheduled' || p.status === 'pending');
     const completed = payments.filter(p => p.status === 'completed').slice(0, 20);
     res.render('billpay/index', { title: 'Bill Payments - United Credit Bank', page: 'billpay', payments, upcoming, completed, billers: BILLERS });
@@ -100,14 +103,14 @@ router.get('/', requireAuth, requireVerified, async (req, res) => {
 
 router.get('/pay', requireAuth, requireVerified, async (req, res) => {
   try {
-    const accounts = await userAccounts(userId(req), true);
+    const accounts = await userAccounts(ownerIds(req), true);
     const selectedBiller = req.query.biller ? BILLERS.find(b => b.code === req.query.biller) : null;
     res.render('billpay/pay', { title: 'Pay Bill - United Credit Bank', page: 'billpay', accounts, billers: BILLERS, selectedBiller });
   } catch (error) { console.error('Bill payment form unavailable:', error); res.sendStatus(503); }
 });
 
 router.post('/pay', requireAuth, requireVerified, async (req, res) => {
-  const uid = userId(req); const { account_id, biller_name, biller_code, amount, recurring, frequency } = req.body;
+  const uid = userId(req), owners = ownerIds(req); const { account_id, biller_name, biller_code, amount, recurring, frequency } = req.body;
   const reference_number = req.body.reference_number || req.body.customer_ref || '';
   const payment_date = req.body.payment_date || req.body.scheduled_date || null;
   try {
@@ -116,7 +119,7 @@ router.post('/pay', requireAuth, requireVerified, async (req, res) => {
     const paymentId = newId(); const txnId = newId(); const ledgerId = newId();
     const status = minor >= 300000 ? 'pending' : 'completed';
     await repo.runTransaction(async tx => {
-      const account = await accountOwned(tx, String(account_id || ''), uid);
+      const account = await accountOwned(tx, String(account_id || ''), owners);
       if (!account) throw Object.assign(new Error('Invalid account selected.'), { userError: true });
       const restriction = getAccountStatusMessage(accountForView(account), 'pay bills');
       if (restriction) throw Object.assign(new Error(restriction), { userError: true });
@@ -132,7 +135,7 @@ router.post('/pay', requireAuth, requireVerified, async (req, res) => {
       tx.create('transactions', txnId, txn);
       tx.create('ledger_entries', ledgerId, { user_id: uid, account_id: account.id, transaction_id: txnId, entry_type: 'bill_payment', amount_minor: -minor, currency: 'AUD', status, created_at: now });
     });
-    if (status === 'completed') { queueTransactionEmail(txnId, 'Your bill payment was processed successfully.'); await addNotice(uid, 'Bill Paid', `Payment of $${fromMinorUnits(minor).toLocaleString()} to ${biller_name} completed.`, 'success'); }
+    if (status === 'completed') { queueTransactionEmail(txnId, 'Your bill payment was processed successfully.', req.user); await addNotice(uid, 'Bill Paid', `Payment of $${fromMinorUnits(minor).toLocaleString()} to ${biller_name} completed.`, 'success'); }
     else await addNotice(uid, 'Bill Payment Pending', `$${fromMinorUnits(minor).toLocaleString()} payment to ${biller_name} awaiting approval.`, 'warning');
     req.session.success = status === 'completed' ? `Bill payment of $${fromMinorUnits(minor).toLocaleString('en-AU')} to ${biller_name} completed successfully!` : `Bill payment of $${fromMinorUnits(minor).toLocaleString('en-AU')} has been submitted for approval.`;
     res.redirect('/billpay');
@@ -141,9 +144,10 @@ router.post('/pay', requireAuth, requireVerified, async (req, res) => {
 
 router.get('/scheduled', requireAuth, async (req, res) => {
   try {
-    const all = await repo.list('bill_payments', [{ field: 'user_id', value: userId(req) }]);
+    const owners = ownerIds(req);
+    const all = await listByOwnerIds(repo, 'bill_payments', owners);
     const rows = all.filter(p => p.status === 'scheduled' || p.recurring === true || p.recurring === 1).sort((a, b) => String(a.payment_date || '').localeCompare(String(b.payment_date || '')));
-    const scheduled = await Promise.all(rows.map(async p => paymentForView(p, await repo.get('accounts', p.account_id))));
+    const scheduled = await Promise.all(rows.map(async p => { const account = await repo.get('accounts', p.account_id); return paymentForView(p, recordHasOwnerId(account, owners) ? account : null); }));
     res.render('billpay/scheduled', { title: 'Scheduled Payments - United Credit Bank', page: 'billpay', scheduled });
   } catch (error) { console.error('Scheduled payments unavailable:', error); res.sendStatus(503); }
 });
@@ -151,18 +155,21 @@ router.get('/scheduled', requireAuth, async (req, res) => {
 router.get('/:id', requireAuth, async (req, res) => {
   try {
     const payment = await repo.get('bill_payments', req.params.id);
-    if (!payment || payment.user_id !== userId(req)) { req.session.error = 'Payment record not found.'; return res.redirect('/billpay'); }
-    const viewPayment = paymentForView(payment, await repo.get('accounts', payment.account_id));
+    const owners = ownerIds(req);
+    if (!recordHasOwnerId(payment, owners)) { req.session.error = 'Payment record not found.'; return res.redirect('/billpay'); }
+    const account = await repo.get('accounts', payment.account_id);
+    const viewPayment = paymentForView(payment, recordHasOwnerId(account, owners) ? account : null);
     res.render('billpay/detail', { title: 'Bill Payment Details - United Credit Bank', page: 'billpay', payment: viewPayment, bill: viewPayment });
   } catch (error) { console.error('Payment detail unavailable:', error); res.sendStatus(503); }
 });
 
 router.post('/:id/cancel', requireAuth, async (req, res) => {
   try {
+    const owners = ownerIds(req);
     let payment;
     await repo.runTransaction(async tx => {
       payment = await tx.get('bill_payments', req.params.id);
-      if (!payment || payment.user_id !== userId(req) || !['pending', 'scheduled'].includes(payment.status)) throw Object.assign(new Error('Cannot cancel this payment.'), { userError: true });
+      if (!recordHasOwnerId(payment, owners) || !['pending', 'scheduled'].includes(payment.status)) throw Object.assign(new Error('Cannot cancel this payment.'), { userError: true });
       tx.update('bill_payments', payment.id, { status: 'cancelled', updated_at: new Date().toISOString() });
     });
     await addNotice(userId(req), 'Payment Cancelled', `Bill payment #${payment.id} has been cancelled.`, 'info');
@@ -171,16 +178,16 @@ router.post('/:id/cancel', requireAuth, async (req, res) => {
 });
 
 router.get('/deposit/new', requireAuth, requireVerified, async (req, res) => {
-  try { const accounts = await userAccounts(userId(req), true); res.render('billpay/deposit', { title: 'Deposit Funds - United Credit Bank', page: 'billpay', accounts }); }
+  try { const accounts = await userAccounts(ownerIds(req), true); res.render('billpay/deposit', { title: 'Deposit Funds - United Credit Bank', page: 'billpay', accounts }); }
   catch (error) { console.error('Deposit form unavailable:', error); res.sendStatus(503); }
 });
 router.post('/deposit', requireAuth, requireVerified, async (req, res) => {
-  const uid = userId(req); const { account_id, amount, source, reference, description } = req.body;
+  const uid = userId(req), owners = ownerIds(req); const { account_id, amount, source, reference, description } = req.body;
   try {
     const minor = toMinorUnits(amount); if (minor <= 0) return paymentStatusError(res, req, '/billpay/deposit/new', 'Invalid deposit amount.');
     const txnId = newId(); const ledgerId = newId(); const status = minor >= 1000000 ? 'pending' : 'completed'; let accountName = '';
     await repo.runTransaction(async tx => {
-      const account = await accountOwned(tx, String(account_id || ''), uid);
+      const account = await accountOwned(tx, String(account_id || ''), owners);
       if (!account) throw Object.assign(new Error('Invalid account.'), { userError: true });
       const restriction = getAccountStatusMessage(accountForView(account), 'receive deposits');
       if (restriction) throw Object.assign(new Error(restriction), { userError: true });
@@ -191,22 +198,22 @@ router.post('/deposit', requireAuth, requireVerified, async (req, res) => {
       tx.create('ledger_entries', ledgerId, { user_id: uid, account_id: account.id, transaction_id: txnId, entry_type: 'deposit', amount_minor: minor, currency: 'AUD', status, created_at: now });
     });
     await addNotice(uid, status === 'completed' ? 'Deposit Successful' : 'Deposit Pending', status === 'completed' ? `$${fromMinorUnits(minor).toLocaleString()} deposited to ${accountName}.` : `Deposit of $${fromMinorUnits(minor).toLocaleString()} awaiting admin approval.`, status === 'completed' ? 'success' : 'warning');
-    queueTransactionEmail(txnId, status === 'completed' ? 'A credit has been applied to your account.' : 'Your deposit is pending approval.');
+    queueTransactionEmail(txnId, status === 'completed' ? 'A credit has been applied to your account.' : 'Your deposit is pending approval.', req.user);
     req.session.success = status === 'completed' ? `Successfully deposited $${fromMinorUnits(minor).toLocaleString('en-AU')}!` : `Deposit of $${fromMinorUnits(minor).toLocaleString('en-AU')} submitted for approval.`; res.redirect('/user/dashboard');
   } catch (error) { if (error.userError) return paymentStatusError(res, req, '/billpay/deposit/new', error.message); console.error('Deposit failed closed:', error); res.sendStatus(503); }
 });
 
 router.get('/withdraw/new', requireAuth, requireVerified, async (req, res) => {
-  try { const accounts = await userAccounts(userId(req), true); res.render('billpay/withdraw', { title: 'Withdraw Funds - United Credit Bank', page: 'billpay', accounts }); }
+  try { const accounts = await userAccounts(ownerIds(req), true); res.render('billpay/withdraw', { title: 'Withdraw Funds - United Credit Bank', page: 'billpay', accounts }); }
   catch (error) { console.error('Withdrawal form unavailable:', error); res.sendStatus(503); }
 });
 router.post('/withdraw', requireAuth, requireVerified, async (req, res) => {
-  const uid = userId(req); const { account_id, amount, method, destination, reference, description } = req.body;
+  const uid = userId(req), owners = ownerIds(req); const { account_id, amount, method, destination, reference, description } = req.body;
   try {
     const minor = toMinorUnits(amount); if (minor <= 0) return paymentStatusError(res, req, '/billpay/withdraw/new', 'Invalid withdrawal amount.');
     const txnId = newId(); const ledgerId = newId(); const status = minor >= 500000 ? 'pending' : 'completed'; let accountName = '';
     await repo.runTransaction(async tx => {
-      const account = await accountOwned(tx, String(account_id || ''), uid);
+      const account = await accountOwned(tx, String(account_id || ''), owners);
       if (!account) throw Object.assign(new Error('Invalid account.'), { userError: true });
       const restriction = getAccountStatusMessage(accountForView(account), 'withdraw funds');
       if (restriction) throw Object.assign(new Error(restriction), { userError: true });
@@ -217,7 +224,7 @@ router.post('/withdraw', requireAuth, requireVerified, async (req, res) => {
       tx.create('ledger_entries', ledgerId, { user_id: uid, account_id: account.id, transaction_id: txnId, entry_type: 'withdrawal', amount_minor: -minor, currency: 'AUD', status, created_at: now });
     });
     await addNotice(uid, status === 'completed' ? 'Withdrawal Complete' : 'Withdrawal Pending', status === 'completed' ? `$${fromMinorUnits(minor).toLocaleString()} withdrawn from ${accountName}.` : `Withdrawal of $${fromMinorUnits(minor).toLocaleString()} awaiting admin approval.`, status === 'completed' ? 'info' : 'warning');
-    queueTransactionEmail(txnId, status === 'completed' ? 'A debit has been applied to your account.' : 'Your withdrawal is pending approval.');
+    queueTransactionEmail(txnId, status === 'completed' ? 'A debit has been applied to your account.' : 'Your withdrawal is pending approval.', req.user);
     req.session.success = status === 'completed' ? `Withdrawal of $${fromMinorUnits(minor).toLocaleString('en-AU')} completed!` : `Withdrawal of $${fromMinorUnits(minor).toLocaleString('en-AU')} submitted for approval.`; res.redirect('/user/dashboard');
   } catch (error) { if (error.userError) return paymentStatusError(res, req, '/billpay/withdraw/new', error.message); console.error('Withdrawal failed closed:', error); res.sendStatus(503); }
 });

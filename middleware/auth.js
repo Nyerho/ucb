@@ -1,6 +1,7 @@
 'use strict';
 
 const { createFirestoreRepository } = require('../services/firestore-rest');
+const { listByOwnerIds } = require('../services/owner-records');
 const repository = createFirestoreRepository();
 const NON_OPERABLE_ACCOUNT_STATUSES = new Set(['frozen', 'blocked', 'closed']);
 
@@ -44,6 +45,7 @@ function requireAdmin(req, res, next) {
 async function getUserAccounts(userId, options = {}) {
   const filters = [{ field: 'user_id', op: 'EQUAL', value: String(userId) }];
   if (options.operableOnly) filters.push({ field: 'status', op: 'EQUAL', value: 'active' });
+  if (Array.isArray(options.ownerIds)) return listByOwnerIds(repository, 'accounts', options.ownerIds, options.operableOnly ? [{ field: 'status', value: 'active' }] : [], { orderBy: { field: 'created_at', direction: 'ASCENDING' }, limit: 100 });
   return repository.list('accounts', filters, { orderBy: { field: 'created_at', direction: 'ASCENDING' }, limit: 100 });
 }
 
@@ -60,19 +62,19 @@ function isAccountOperable(account) {
   return !getAccountStatusMessage(account);
 }
 
-async function getPrimaryAccount(userId) {
-  const accounts = await repository.list('accounts', [{ field: 'user_id', value: String(userId) }], {
+async function getPrimaryAccount(userId, ownerIds = [String(userId)]) {
+  const accounts = await listByOwnerIds(repository, 'accounts', ownerIds, [], {
     orderBy: { field: 'created_at', direction: 'ASCENDING' }, limit: 1
   });
   return accounts[0] || null;
 }
 
-async function getRecentTransactions(userId, limit = 10) {
+async function getRecentTransactions(userId, limit = 10, ownerIds = [String(userId)]) {
   const [transactions, accounts] = await Promise.all([
-    repository.list('transactions', [{ field: 'user_id', value: String(userId) }], {
+    listByOwnerIds(repository, 'transactions', ownerIds, [], {
       orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit
     }),
-    repository.list('accounts', [{ field: 'user_id', value: String(userId) }], { limit: 100 })
+    listByOwnerIds(repository, 'accounts', ownerIds, [], { limit: 100 })
   ]);
   const byId = new Map(accounts.map((account) => [String(account.id), account]));
   return transactions.map((transaction) => ({
@@ -82,8 +84,8 @@ async function getRecentTransactions(userId, limit = 10) {
   }));
 }
 
-async function getNotifications(userId, limit = 10) {
-  return repository.list('notifications', [{ field: 'user_id', value: String(userId) }], {
+async function getNotifications(userId, limit = 10, ownerIds = [String(userId)]) {
+  return listByOwnerIds(repository, 'notifications', ownerIds, [], {
     orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit
   });
 }

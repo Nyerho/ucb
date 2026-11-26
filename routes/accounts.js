@@ -4,6 +4,8 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { createFirestoreRepository } = require('../services/firestore-rest');
 const { toMinorUnits, readMinorUnits, fromMinorUnits } = require('../services/money');
+const { matchesAuthenticatedFirebaseUid } = require('../services/authenticated-profile');
+const { ownerIdsForRequest, listByOwnerIds, recordHasOwnerId } = require('../services/owner-records');
 const { requireAuth, requireVerified, getAccountStatusMessage, generateAccountNumber } = require('../middleware/auth');
 const router = express.Router();
 const repo = createFirestoreRepository();
@@ -35,7 +37,7 @@ function routeError(req, res, error, fallback) {
 
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const docs = await repo.list('accounts', [{ field: 'user_id', op: 'EQUAL', value: String(req.auth.uid) }], {
+    const docs = await listByOwnerIds(repo, 'accounts', ownerIdsForRequest(req), [], {
       orderBy: { field: 'created_at', direction: 'ASCENDING' }, limit: 100
     });
     const accounts = docs.map(accountForView);
@@ -47,14 +49,14 @@ router.get('/', requireAuth, async (req, res) => {
 
 router.get('/:id', requireAuth, async (req, res) => {
   try {
+    const ownerIds = ownerIdsForRequest(req);
     const [rawAccount, rawTransactions] = await Promise.all([
       repo.get('accounts', String(req.params.id)),
-      repo.list('transactions', [
-        { field: 'user_id', op: 'EQUAL', value: String(req.auth.uid) },
-        { field: 'account_id', op: 'EQUAL', value: String(req.params.id) }
-      ], { orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit: 500 })
+      listByOwnerIds(repo, 'transactions', ownerIds,
+        [{ field: 'account_id', op: 'EQUAL', value: String(req.params.id) }],
+        { orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit: 500 })
     ]);
-    if (!rawAccount || String(rawAccount.user_id) !== String(req.auth.uid)) {
+    if (!rawAccount || !recordHasOwnerId(rawAccount, ownerIds)) {
       req.session.error = 'Account not found.';
       return res.redirect('/accounts');
     }
@@ -100,7 +102,7 @@ router.post('/open', requireAuth, requireVerified, async (req, res) => {
   const now = new Date().toISOString();
   try {
     const user = req.user;
-    if (!user || String(user.id || user.uid || uid) !== uid) throw new Error('Verified user profile unavailable.');
+    if (!matchesAuthenticatedFirebaseUid(user, uid)) throw new Error('Verified user profile unavailable.');
     const name = `${user.first_name || ''} ${user.last_name || ''}`.trim();
     if (!name) throw new Error('Account holder name unavailable.');
     await repo.runTransaction(async (tx) => {
@@ -130,9 +132,10 @@ router.post('/open', requireAuth, requireVerified, async (req, res) => {
 
 router.post('/:id/close', requireAuth, requireVerified, async (req, res) => {
   const uid = String(req.auth.uid);
+  const ownerIds = ownerIdsForRequest(req);
   try {
     const account = await repo.get('accounts', String(req.params.id));
-    if (!account || String(account.user_id) !== uid) {
+    if (!account || !recordHasOwnerId(account, ownerIds)) {
       req.session.error = 'Account not found.';
       return res.redirect('/accounts');
     }
@@ -147,7 +150,7 @@ router.post('/:id/close', requireAuth, requireVerified, async (req, res) => {
     }
     await repo.runTransaction(async (tx) => {
       const current = await tx.get('accounts', String(req.params.id));
-      if (!current || String(current.user_id) !== uid || readMinorUnits(current, 'balance_minor', 'balance') !== 0 || current.status !== account.status) {
+      if (!current || !recordHasOwnerId(current, ownerIds) || readMinorUnits(current, 'balance_minor', 'balance') !== 0 || current.status !== account.status) {
         throw new Error('Account changed before closure; retry the request.');
       }
       const now = new Date().toISOString();

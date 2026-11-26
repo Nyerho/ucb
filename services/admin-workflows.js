@@ -4,6 +4,8 @@ const crypto = require('node:crypto');
 const { getRuntimeEnv } = require('../lib/runtime-env');
 const { toMinorUnits, readMinorUnits } = require('./money');
 const { explicitAdminRole } = require('./authenticated-profile');
+const { hasConflictingFirebaseUid, hasConflictingFirebaseUidAliases, firebaseOwnerUid, legacyProfileId } = require('./firebase-owner-id');
+const { ownerIdsForIdentity, listByOwnerIds, recordHasOwnerId } = require('./owner-records');
 
 const PROFILE_FIELDS = new Set(['first_name', 'last_name', 'phone', 'address', 'city', 'state', 'postcode']);
 const ACCOUNT_METADATA_FIELDS = new Set(['account_name', 'branch']);
@@ -172,7 +174,7 @@ async function requireCurrentAdmin(tx, actorId) {
     const role = explicitAdminRole(adminProfile);
     const blocked = boolFlag(adminProfile.disabled) || boolFlag(adminProfile.is_frozen)
       || boolFlag(userProfile && userProfile.disabled) || boolFlag(userProfile && userProfile.is_frozen);
-    if (adminProfile.active !== true || !role || blocked) {
+    if (adminProfile.active !== true || !role || blocked || hasConflictingFirebaseUid(adminProfile, actorId)) {
       throw workflowError('Administrator permissions are no longer active.', 403);
     }
     return {
@@ -184,13 +186,29 @@ async function requireCurrentAdmin(tx, actorId) {
       is_super_admin: role === 'super_admin'
     };
   }
+  throw workflowError('Administrator permissions are no longer active.', 403);
+}
 
-  const actor = userProfile;
-  const isAdmin = actor && (boolFlag(actor.is_admin) || actor.is_super_admin === true || actor.role === 'admin' || actor.role === 'super_admin');
-  if (!isAdmin || boolFlag(actor.disabled) || boolFlag(actor.is_frozen)) {
-    throw workflowError('Administrator permissions are no longer active.', 403);
+async function getCustomerProfileByOwnerId(tx, ownerIdValue) {
+  const ownerId = requireId(ownerIdValue, 'customer id');
+  const directProfile = await tx.get('users', ownerId);
+  if (directProfile) {
+    if (hasConflictingFirebaseUidAliases(directProfile)) return { profile: null, profileId: ownerId, ownerUid: '', ownerIds: [] };
+    const ownerUid = firebaseOwnerUid(directProfile, ownerId);
+    if (!ownerUid || (!/^\d+$/.test(ownerId) && ownerUid !== ownerId)) return { profile: null, profileId: ownerId, ownerUid: '', ownerIds: [] };
+    return { profile: directProfile, profileId: ownerId, ownerUid, ownerIds: ownerIdsForIdentity(ownerUid, ownerId, directProfile) };
   }
-  return actor;
+  const legacyId = legacyProfileId(ownerId);
+  if (!legacyId) return { profile: null, profileId: ownerId, ownerUid: '', ownerIds: [] };
+  const profile = await tx.get('users', legacyId);
+  if (!profile || hasConflictingFirebaseUidAliases(profile) || firebaseOwnerUid(profile, legacyId) !== ownerId) return { profile: null, profileId: legacyId, ownerUid: '', ownerIds: [] };
+  return { profile, profileId: legacyId, ownerUid: ownerId, ownerIds: ownerIdsForIdentity(ownerId, legacyId, profile) };
+}
+
+function requireFirebaseOwnerUid(profile, profileDocumentId) {
+  const uid = firebaseOwnerUid(profile, profileDocumentId);
+  if (!uid) throw workflowError('The customer profile has no verified Firebase UID binding. The customer must complete a verified Firebase sign-in before administrator actions can continue.', 409);
+  return uid;
 }
 
 function makeAudit({ actorId, action, targetType, targetId, details, ipAddress, createdAt }) {
@@ -292,13 +310,13 @@ function assertActiveAccount(account, action) {
   if (status !== 'active') throw workflowError(`This account is ${status} and cannot be used to ${action}.`, 409);
 }
 
-async function findBillForTransaction(tx, transaction) {
+async function findBillForTransaction(tx, transaction, ownerIds) {
   if (transaction.bill_payment_id) {
     const linked = await tx.get('bill_payments', String(transaction.bill_payment_id));
     if (!linked) throw workflowError('The linked bill-payment record is missing; review the records before retrying.', 409);
     return linked;
   }
-  const candidates = await tx.list('bill_payments', [{ field: 'user_id', value: String(transaction.user_id) }], { limit: 1000 });
+  const candidates = await listByOwnerIds(tx, 'bill_payments', ownerIds, [], { limit: 1000 });
   if (candidates.length >= 1000) throw workflowError('Bill-payment matching requires a manual record review.', 409);
   const { amountMinor } = transactionAmount(transaction);
   const matches = candidates.filter((bill) => String(bill.account_id) === String(transaction.account_id) && bill.status === 'pending' && safeMinor(bill, 'amount_minor', 'amount') === amountMinor);
@@ -306,13 +324,13 @@ async function findBillForTransaction(tx, transaction) {
   return matches[0];
 }
 
-async function findTransactionForBill(tx, bill) {
+async function findTransactionForBill(tx, bill, ownerIds) {
   if (bill.transaction_id) {
     const linked = await tx.get('transactions', String(bill.transaction_id));
     if (!linked) throw workflowError('The linked transaction record is missing; review the records before retrying.', 409);
     return linked;
   }
-  const candidates = await tx.list('transactions', [{ field: 'user_id', value: String(bill.user_id) }], { limit: 1000 });
+  const candidates = await listByOwnerIds(tx, 'transactions', ownerIds, [], { limit: 1000 });
   if (candidates.length >= 1000) throw workflowError('Transaction matching requires a manual record review.', 409);
   const billAmount = safeMinor(bill, 'amount_minor', 'amount');
   const matches = candidates.filter((transaction) => String(transaction.account_id) === String(bill.account_id) && transaction.transaction_type === 'bill_payment' && transaction.status === 'pending' && safeMinor(transaction, 'amount_minor', 'amount') === billAmount);
@@ -333,6 +351,7 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         await requireCurrentAdmin(tx, actor);
         const user = await tx.get('users', target);
         if (!user) throw workflowError('Customer not found.', 404);
+        const ownerUid = requireFirebaseOwnerUid(user, target);
         if (boolFlag(user.is_admin) || user.role === 'admin') throw workflowError('Administrator profiles cannot be edited through customer controls.', 409);
         tx.update('users', target, { ...changes, updated_at: createdAt });
         tx.create('audit_logs', idFactory(), makeAudit({
@@ -340,7 +359,7 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
           details: { changed_fields: Object.keys(changes).sort(), reason }, ipAddress, createdAt
         }));
         tx.create('notifications', idFactory(), makeNotification({
-          userId: target, title: 'Account details updated', message: 'Your account profile details were updated by an administrator.', type: 'info', createdAt, idFactory
+          userId: ownerUid, title: 'Account details updated', message: 'Your account profile details were updated by an administrator.', type: 'info', createdAt, idFactory
         }));
         return { changed: true, changedFields: Object.keys(changes).sort() };
       });
@@ -359,6 +378,7 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         await requireCurrentAdmin(tx, actor);
         const user = await tx.get('users', target);
         if (!user) throw workflowError('Customer not found.', 404);
+        const ownerUid = requireFirebaseOwnerUid(user, target);
         if (boolFlag(user.is_admin) || user.role === 'admin' || user.role === 'super_admin') throw workflowError('Administrator accounts cannot be frozen through customer controls.', 409);
         if (boolFlag(user.disabled) && !freeze) throw workflowError('Disabled customers must be restored through the audited restore action.', 409);
         const wasFrozen = boolFlag(user.is_frozen);
@@ -369,7 +389,7 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
           details: { previous: wasFrozen ? 'frozen' : 'active', next: freeze ? 'frozen' : 'active', reason }, ipAddress, createdAt
         }));
         tx.create('notifications', idFactory(), makeNotification({
-          userId: target, title: freeze ? 'Account frozen' : 'Account unfrozen',
+          userId: ownerUid, title: freeze ? 'Account frozen' : 'Account unfrozen',
           message: freeze ? `Your account access has been frozen. Reason: ${reason}` : 'Your account access has been restored.',
           type: freeze ? 'warning' : 'success', createdAt, idFactory
         }));
@@ -384,11 +404,12 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         await requireCurrentAdmin(tx, actor);
         const user = await tx.get('users', target);
         if (!user) throw workflowError('Customer not found.', 404);
+        const ownerUid = requireFirebaseOwnerUid(user, target);
         if (boolFlag(user.is_admin) || user.role === 'admin' || user.role === 'super_admin') throw workflowError('Administrator accounts cannot be disabled through customer controls.', 409);
         if (boolFlag(user.disabled)) return { changed: false };
         tx.update('users', target, { disabled: true, is_frozen: 1, disabled_at: createdAt, disabled_reason: reason, updated_at: createdAt });
         tx.create('audit_logs', idFactory(), makeAudit({ actorId: actor, action: 'disable_customer', targetType: 'user', targetId: target, details: { reason, financial_history_retained: true }, ipAddress, createdAt }));
-        tx.create('notifications', idFactory(), makeNotification({ userId: target, title: 'Account access disabled', message: 'Your account access has been disabled. Contact support for assistance.', type: 'warning', createdAt, idFactory }));
+        tx.create('notifications', idFactory(), makeNotification({ userId: ownerUid, title: 'Account access disabled', message: 'Your account access has been disabled. Contact support for assistance.', type: 'warning', createdAt, idFactory }));
         return { changed: true };
       });
       return result.result;
@@ -400,28 +421,22 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         await requireCurrentAdmin(tx, actor);
         const user = await tx.get('users', target);
         if (!user) throw workflowError('Customer not found.', 404);
+        const ownerUid = requireFirebaseOwnerUid(user, target);
         if (boolFlag(user.is_admin) || user.role === 'admin' || user.role === 'super_admin') throw workflowError('Administrator accounts cannot be restored through customer controls.', 409);
         if (!boolFlag(user.disabled)) return { changed: false };
         tx.update('users', target, { disabled: false, is_frozen: 0, disabled_at: null, disabled_reason: null, updated_at: createdAt });
         tx.create('audit_logs', idFactory(), makeAudit({ actorId: actor, action: 'restore_customer', targetType: 'user', targetId: target, details: { reason, financial_history_retained: true }, ipAddress, createdAt }));
-        tx.create('notifications', idFactory(), makeNotification({ userId: target, title: 'Account access restored', message: 'Your account access has been restored. Contact support if you need help signing in.', type: 'success', createdAt, idFactory }));
+        tx.create('notifications', idFactory(), makeNotification({ userId: ownerUid, title: 'Account access restored', message: 'Your account access has been restored. Contact support if you need help signing in.', type: 'success', createdAt, idFactory }));
         return { changed: true };
       });
       return result.result;
     },
 
-    async recordPasswordResetRequest({ actorId, targetId, reason: reasonInput, ipAddress }) {
-      const actor = requireActor(actorId), target = requireId(targetId, 'user id'), reason = requiredReason(reasonInput), createdAt = clock();
-      const result = await repo.runTransaction(async (tx) => {
-        await requireCurrentAdmin(tx, actor);
-        const user = await tx.get('users', target);
-        if (!user) throw workflowError('Customer not found.', 404);
-        if (boolFlag(user.is_admin) || user.role === 'admin' || user.role === 'super_admin') throw workflowError('Administrator password resets must use the verified administrator recovery process.', 409);
-        if (!user.email || typeof user.email !== 'string') throw workflowError('Customer email is missing from the Firebase profile.', 409);
-        tx.create('audit_logs', idFactory(), makeAudit({ actorId: actor, action: 'request_password_reset', targetType: 'user', targetId: target, details: { reason, delivery: 'Firebase password-reset email requested' }, ipAddress, createdAt }));
-        return { email: user.email };
-      });
-      return result.result;
+    async recordPasswordResetRequest({ actorId, targetId, reason: reasonInput }) {
+      requireActor(actorId);
+      requireId(targetId, 'user id');
+      requiredReason(reasonInput);
+      throw workflowError('Administrator password-reset delivery is disabled because the current Firebase Auth email cannot be verified for this user. Ask the customer to use the secure Forgot Password flow.', 503);
     },
 
     async createCustomer({ actorId, userId, body, ipAddress }) {
@@ -489,6 +504,7 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         const user = await tx.get('users', target);
         if (!user) throw workflowError('Customer not found.', 404);
         if (boolFlag(user.disabled) || boolFlag(user.is_admin) || user.role === 'admin') throw workflowError('An active customer is required to open an account.', 409);
+        const ownerUid = requireFirebaseOwnerUid(user, target);
         const accountId = idFactory(), ledgerId = idFactory(), auditId = idFactory(), notificationId = idFactory();
         let accountNumber = '';
         for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -498,17 +514,17 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         }
         if (!accountNumber) throw workflowError('Could not allocate a unique account number. Try again.', 503);
         tx.create('accounts', accountId, {
-          user_id: target, account_number: accountNumber, account_type: accountType,
+          user_id: ownerUid, account_number: accountNumber, account_type: accountType,
           account_name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || accountType,
           status: 'active', currency: 'AUD', branch, bsb, interest_rate: 0,
           balance_minor: 0, available_balance_minor: 0, created_at: createdAt, updated_at: createdAt
         });
         tx.create('ledger_entries', ledgerId, {
-          user_id: target, account_id: accountId, amount_minor: 0, balance_after_minor: 0,
+          user_id: ownerUid, account_id: accountId, amount_minor: 0, balance_after_minor: 0,
           entry_type: 'account_opening', status: 'completed', currency: 'AUD', description: 'Account opened at zero balance', created_at: createdAt
         });
-        tx.create('audit_logs', auditId, makeAudit({ actorId: actor, action: 'create_account', targetType: 'account', targetId: accountId, details: { user_id: target, account_type: accountType, reason, initial_balance_minor: 0 }, ipAddress, createdAt }));
-        tx.create('notifications', notificationId, makeNotification({ userId: target, title: 'New account opened', message: `A ${accountType} account has been opened for you.`, type: 'success', createdAt, idFactory: () => notificationId }));
+        tx.create('audit_logs', auditId, makeAudit({ actorId: actor, action: 'create_account', targetType: 'account', targetId: accountId, details: { user_id: ownerUid, account_type: accountType, reason, initial_balance_minor: 0 }, ipAddress, createdAt }));
+        tx.create('notifications', notificationId, makeNotification({ userId: ownerUid, title: 'New account opened', message: `A ${accountType} account has been opened for you.`, type: 'success', createdAt, idFactory: () => notificationId }));
         const value = { changed: true, accountId, accountNumber };
         createOperation(tx, { operationId, actorId: actor, action: 'create_account', targetId: accountId, request, result: value, createdAt });
         return value;
@@ -528,6 +544,8 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         if (replay) return replay;
         const account = await tx.get('accounts', target);
         if (!account) throw workflowError('Account not found.', 404);
+        const accountOwner = await getCustomerProfileByOwnerId(tx, requireId(account.user_id, 'customer id'));
+        if (!accountOwner.profile) throw workflowError('Account owner identity could not be verified.', 409);
         assertActiveAccount(account, 'receive an administrative balance adjustment');
         const { balanceMinor, availableMinor } = accountMoney(account);
         const direction = adjustmentType === 'credit' ? 1 : -1;
@@ -542,18 +560,18 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         const currency = String(account.currency || 'AUD').toUpperCase();
         tx.update('accounts', target, { balance_minor: newBalanceMinor, available_balance_minor: newAvailableMinor, updated_at: createdAt });
         tx.create('transactions', transactionId, {
-          user_id: String(account.user_id), account_id: target, transaction_type: 'admin_adjustment', amount_minor: deltaMinor,
+          user_id: accountOwner.ownerUid, account_id: target, transaction_type: 'admin_adjustment', amount_minor: deltaMinor,
           currency, description: `Administrator ${adjustmentType}: ${reason.slice(0, 160)}`, reference, status: 'completed',
           approved_by: actor, approved_at: createdAt, created_at: createdAt, updated_at: createdAt
         });
         tx.create('ledger_entries', ledgerId, {
-          user_id: String(account.user_id), account_id: target, transaction_id: transactionId,
+          user_id: accountOwner.ownerUid, account_id: target, transaction_id: transactionId,
           entry_type: `admin_adjustment_${adjustmentType}`, amount_minor: deltaMinor,
           balance_after_minor: newBalanceMinor, available_after_minor: newAvailableMinor,
           currency, status: 'completed', reference, description: reason, created_at: createdAt
         });
         tx.create('audit_logs', auditId, makeAudit({ actorId: actor, action: `balance_${adjustmentType}`, targetType: 'account', targetId: target, details: { transaction_id: transactionId, amount_minor: amountMinor, currency, reason, reference }, ipAddress, createdAt }));
-        tx.create('notifications', notificationId, makeNotification({ userId: String(account.user_id), title: 'Account balance adjusted', message: `An administrator ${adjustmentType === 'credit' ? 'credited' : 'debited'} your account.`, type: adjustmentType === 'credit' ? 'success' : 'info', createdAt, idFactory: () => notificationId }));
+        tx.create('notifications', notificationId, makeNotification({ userId: accountOwner.ownerUid, title: 'Account balance adjusted', message: `An administrator ${adjustmentType === 'credit' ? 'credited' : 'debited'} your account.`, type: adjustmentType === 'credit' ? 'success' : 'info', createdAt, idFactory: () => notificationId }));
         const value = { changed: true, transactionId, balanceMinor: newBalanceMinor };
         createOperation(tx, { operationId, actorId: actor, action: 'adjust_account_balance', targetId: target, request, result: value, createdAt });
         return value;
@@ -571,6 +589,8 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         await requireCurrentAdmin(tx, actor);
         const account = await tx.get('accounts', target);
         if (!account) throw workflowError('Account not found.', 404);
+        const ownerId = String(account.user_id || '').trim();
+        const accountOwner = ownerId ? await getCustomerProfileByOwnerId(tx, ownerId) : null;
         const previous = String(account.status || 'active').toLowerCase();
         if (previous === 'closed') {
           if (status === 'closed') return { changed: false, status };
@@ -592,7 +612,7 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         }
         tx.update('accounts', target, { status, updated_at: createdAt });
         tx.create('audit_logs', idFactory(), makeAudit({ actorId: actor, action: 'change_account_status', targetType: 'account', targetId: target, details: { previous, next: status, reason }, ipAddress, createdAt }));
-        tx.create('notifications', idFactory(), makeNotification({ userId: String(account.user_id), title: 'Account status updated', message: `Your account status is now ${status}.`, type: status === 'active' ? 'success' : 'warning', createdAt, idFactory }));
+        if (accountOwner?.ownerUid) tx.create('notifications', idFactory(), makeNotification({ userId: accountOwner.ownerUid, title: 'Account status updated', message: `Your account status is now ${status}.`, type: status === 'active' ? 'success' : 'warning', createdAt, idFactory }));
         return { changed: true, previous, status };
       });
       return result.result;
@@ -622,7 +642,7 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         if (!record) throw workflowError('KYC record not found.', 404);
         if (record.status !== 'pending') throw workflowError('KYC record is no longer pending review.', 409);
         const userId = requireId(record.user_id, 'customer id');
-        const user = await tx.get('users', userId);
+        const { profile: user, profileId, ownerUid, ownerIds } = await getCustomerProfileByOwnerId(tx, userId);
         if (!user) throw workflowError('The customer profile for this KYC record is missing.', 409);
         if (boolFlag(user.disabled)) throw workflowError('Disabled customer KYC records cannot be approved.', 409);
         if (action === 'approve') {
@@ -637,7 +657,7 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         }
         let verified = action === 'approve';
         if (action === 'reject') {
-          const userRecords = await tx.list('kyc', [{ field: 'user_id', value: userId }], { limit: 1000 });
+          const userRecords = await listByOwnerIds(tx, 'kyc', ownerIds, [], { limit: 1000 });
           if (userRecords.length >= 1000) throw workflowError('KYC history requires manual review.', 409);
           const otherApproved = userRecords.filter((item) => item.status === 'approved');
           verified = otherApproved.length > 0;
@@ -649,9 +669,9 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         if (action === 'approve') changes.rejection_reason = '';
         else changes.rejection_reason = reason;
         tx.update('kyc', target, changes);
-        tx.update('users', userId, { is_verified: verified ? 1 : 0, updated_at: createdAt });
+        tx.update('users', profileId, { is_verified: verified ? 1 : 0, updated_at: createdAt });
         tx.create('audit_logs', idFactory(), makeAudit({ actorId: actor, action: action === 'approve' ? 'approve_kyc' : 'reject_kyc', targetType: 'kyc', targetId: target, details: { user_id: userId, document_type: String(record.document_type || ''), previous: 'pending', next: changes.status, reason }, ipAddress, createdAt }));
-        tx.create('notifications', idFactory(), makeNotification({ userId, title: action === 'approve' ? 'Identity verification approved' : 'Identity verification needs attention', message: action === 'approve' ? 'Your submitted identity verification was approved.' : `Your identity verification was not approved: ${reason}`, type: action === 'approve' ? 'success' : 'warning', createdAt, idFactory }));
+        tx.create('notifications', idFactory(), makeNotification({ userId: ownerUid, title: action === 'approve' ? 'Identity verification approved' : 'Identity verification needs attention', message: action === 'approve' ? 'Your submitted identity verification was approved.' : `Your identity verification was not approved: ${reason}`, type: action === 'approve' ? 'success' : 'warning', createdAt, idFactory }));
         return { changed: true, status: changes.status, verified };
       });
       return result.result;
@@ -671,23 +691,32 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         if (targetBillId && !bill) throw workflowError('Bill payment not found.', 404);
         let transaction = targetTransactionId ? await tx.get('transactions', targetTransactionId) : null;
         if (targetTransactionId && !transaction) throw workflowError('Transaction not found.', 404);
-        if (!transaction && bill) transaction = await findTransactionForBill(tx, bill);
+        if (!transaction && bill) {
+          const billOwner = await getCustomerProfileByOwnerId(tx, requireId(bill.user_id, 'customer id'));
+          if (!billOwner.profile) throw workflowError('Customer record is unavailable.', 409);
+          transaction = await findTransactionForBill(tx, bill, billOwner.ownerIds);
+        }
         if (!transaction) throw workflowError('Transaction not found.', 404);
         if (transaction.status !== 'pending') throw workflowError('Transaction is no longer pending review.', 409);
-        if (transaction.transaction_type === 'bill_payment' && !bill) bill = await findBillForTransaction(tx, transaction);
+        if (transaction.transaction_type === 'bill_payment' && !bill) {
+          const transactionOwner = await getCustomerProfileByOwnerId(tx, requireId(transaction.user_id, 'customer id'));
+          if (!transactionOwner.profile) throw workflowError('Customer record is unavailable.', 409);
+          bill = await findBillForTransaction(tx, transaction, transactionOwner.ownerIds);
+        }
         if (bill) {
           if (bill.status !== 'pending') throw workflowError('Bill payment is no longer pending review.', 409);
-          if (String(bill.user_id) !== String(transaction.user_id) || String(bill.account_id) !== String(transaction.account_id)) throw workflowError('Bill and transaction ownership do not match.', 409);
+          if (String(bill.account_id) !== String(transaction.account_id)) throw workflowError('Bill and transaction ownership do not match.', 409);
           if (safeMinor(bill, 'amount_minor', 'amount') !== transactionAmount(transaction).amountMinor) throw workflowError('Bill and transaction amounts do not match.', 409);
         }
         const userId = requireId(transaction.user_id, 'customer id');
         const accountId = requireId(transaction.account_id, 'account id');
-        const [user, account, ledgerEntries] = await Promise.all([
-          tx.get('users', userId), tx.get('accounts', accountId),
+        const { profile: user, ownerUid, ownerIds } = await getCustomerProfileByOwnerId(tx, userId);
+        const [account, ledgerEntries] = await Promise.all([
+          tx.get('accounts', accountId),
           tx.list('ledger_entries', [{ field: 'transaction_id', value: String(transaction.id || targetTransactionId) }], { limit: 100 })
         ]);
         if (!user || boolFlag(user.disabled)) throw workflowError('Customer record is unavailable.', 409);
-        if (!account || String(account.user_id) !== userId) throw workflowError('Transaction account ownership could not be confirmed.', 409);
+        if ((bill && !recordHasOwnerId(bill, ownerIds)) || !recordHasOwnerId(account, ownerIds)) throw workflowError('Transaction account ownership could not be confirmed.', 409);
         const type = String(transaction.transaction_type || '');
         if (!SETTLEMENT_TYPES.has(type)) throw workflowError('This transaction type cannot be approved through the settlement workflow.', 409);
         const { amountMinor, feeMinor, totalMinor } = transactionAmount(transaction);
@@ -738,7 +767,7 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         tx.update('accounts', accountId, { balance_minor: nextBalanceMinor, available_balance_minor: nextAvailableMinor, updated_at: createdAt });
         tx.update('transactions', String(transaction.id || targetTransactionId), transactionChanges);
         tx.create('ledger_entries', idFactory(), {
-          user_id: userId, account_id: accountId, transaction_id: String(transaction.id || targetTransactionId),
+          user_id: ownerUid, account_id: accountId, transaction_id: String(transaction.id || targetTransactionId),
           entry_type: ledgerType, amount_minor: ledgerAmountMinor,
           ...(reservedMinor && action === 'reject' ? { release_minor: reservedMinor } : {}),
           balance_after_minor: nextBalanceMinor, available_after_minor: nextAvailableMinor,
@@ -757,7 +786,7 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
           ipAddress, createdAt
         }));
         tx.create('notifications', idFactory(), makeNotification({
-          userId, title: action === 'approve' ? 'Transaction approved' : 'Transaction rejected',
+          userId: ownerUid, title: action === 'approve' ? 'Transaction approved' : 'Transaction rejected',
           message: action === 'approve' ? `Your ${type.replace(/_/g, ' ')} transaction was approved and recorded.` : `Your ${type.replace(/_/g, ' ')} transaction was rejected: ${reason}`,
           type: action === 'approve' ? 'success' : 'warning', createdAt, idFactory
         }));
@@ -776,13 +805,13 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         if (card.status !== 'pending') throw workflowError('Card application is no longer pending review.', 409);
         const userId = requireId(card.user_id, 'customer id');
         const accountId = requireId(card.account_id, 'account id');
-        const [user, account] = await Promise.all([tx.get('users', userId), tx.get('accounts', accountId)]);
-        if (!user || boolFlag(user.disabled) || String(userId) !== String(account?.user_id)) throw workflowError('Card applicant or account ownership could not be confirmed.', 409);
+        const [{ profile: user, ownerUid, ownerIds }, account] = await Promise.all([getCustomerProfileByOwnerId(tx, userId), tx.get('accounts', accountId)]);
+        if (!user || boolFlag(user.disabled) || !recordHasOwnerId(account, ownerIds)) throw workflowError('Card applicant or account ownership could not be confirmed.', 409);
         if (action === 'approve') {
           if (boolFlag(user.is_frozen)) throw workflowError('Frozen customers cannot have card applications approved.', 409);
           assertActiveAccount(account, 'approve a card application');
           if (!boolFlag(user.is_verified)) {
-            const userKyc = await tx.list('kyc', [{ field: 'user_id', value: userId }], { limit: 1000 });
+            const userKyc = await listByOwnerIds(tx, 'kyc', ownerIds, [], { limit: 1000 });
             if (userKyc.length >= 1000 || !userKyc.some((item) => item.status === 'approved')) throw workflowError('An approved KYC record is required before card approval.', 409);
           }
         }
@@ -792,7 +821,7 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
           ...(action === 'reject' ? { rejection_reason: reason } : { approved_by: actor, approved_at: createdAt, approval_reason: reason, fulfillment_status: 'manual_pending' })
         });
         tx.create('audit_logs', idFactory(), makeAudit({ actorId: actor, action: action === 'approve' ? 'approve_card_for_manual_fulfillment' : 'reject_card', targetType: 'card', targetId: target, details: { user_id: userId, card_type: String(card.card_type || ''), previous: 'pending', next: status, reason, external_issuer: 'not_configured' }, ipAddress, createdAt }));
-        tx.create('notifications', idFactory(), makeNotification({ userId, title: action === 'approve' ? 'Card application approved for fulfillment' : 'Card application rejected', message: action === 'approve' ? 'Your card application passed review and is awaiting manual issuer fulfillment. It cannot be activated until issuance is confirmed.' : `Your card application was rejected: ${reason}`, type: action === 'approve' ? 'info' : 'warning', createdAt, idFactory }));
+        tx.create('notifications', idFactory(), makeNotification({ userId: ownerUid, title: action === 'approve' ? 'Card application approved for fulfillment' : 'Card application rejected', message: action === 'approve' ? 'Your card application passed review and is awaiting manual issuer fulfillment. It cannot be activated until issuance is confirmed.' : `Your card application was rejected: ${reason}`, type: action === 'approve' ? 'info' : 'warning', createdAt, idFactory }));
         return { changed: true, status };
       });
       return result.result;
@@ -816,11 +845,11 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         if (!allowed && status !== previous) throw workflowError('This card status transition is not allowed.', 409);
         if (previous === status) return { changed: false, status };
         const userId = requireId(card.user_id, 'customer id');
-        const user = await tx.get('users', userId);
+        const { profile: user, ownerUid } = await getCustomerProfileByOwnerId(tx, userId);
         if (!user) throw workflowError('Cardholder profile is unavailable.', 409);
         tx.update('cards', target, { status, status_reason: reason, status_updated_by: actor, status_updated_at: createdAt, updated_at: createdAt });
         tx.create('audit_logs', idFactory(), makeAudit({ actorId: actor, action: `set_card_${status}`, targetType: 'card', targetId: target, details: { user_id: userId, previous, next: status, reason }, ipAddress, createdAt }));
-        tx.create('notifications', idFactory(), makeNotification({ userId, title: 'Card status updated', message: `Your card status is now ${status.replace('_', '/')}.`, type: status === 'active' ? 'success' : 'warning', createdAt, idFactory }));
+        tx.create('notifications', idFactory(), makeNotification({ userId: ownerUid, title: 'Card status updated', message: `Your card status is now ${status.replace('_', '/')}.`, type: status === 'active' ? 'success' : 'warning', createdAt, idFactory }));
         return { changed: true, previous, status };
       });
       return result.result;
@@ -835,12 +864,12 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
         if (!loan) throw workflowError('Loan application not found.', 404);
         if (loan.status !== 'pending') throw workflowError('Loan application is no longer pending review.', 409);
         const userId = requireId(loan.user_id, 'customer id');
-        const user = await tx.get('users', userId);
+        const { profile: user, ownerUid, ownerIds } = await getCustomerProfileByOwnerId(tx, userId);
         if (!user || boolFlag(user.disabled)) throw workflowError('Loan applicant is unavailable.', 409);
         if (action === 'reject') {
           tx.update('loans', target, { status: 'rejected', reviewed_by: actor, reviewed_at: createdAt, rejection_reason: decision.reason, updated_at: createdAt });
           tx.create('audit_logs', idFactory(), makeAudit({ actorId: actor, action: 'reject_loan', targetType: 'loan', targetId: target, details: { user_id: userId, previous: 'pending', next: 'rejected', reason: decision.reason }, ipAddress, createdAt }));
-          tx.create('notifications', idFactory(), makeNotification({ userId, title: 'Loan application rejected', message: `Your loan application was rejected: ${decision.reason}`, type: 'warning', createdAt, idFactory }));
+          tx.create('notifications', idFactory(), makeNotification({ userId: ownerUid, title: 'Loan application rejected', message: `Your loan application was rejected: ${decision.reason}`, type: 'warning', createdAt, idFactory }));
           return { changed: true, status: 'rejected' };
         }
 
@@ -860,14 +889,14 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
           ? safeMinor(loan, 'remaining_balance_minor', 'remaining_balance') : amountMinor;
         if (remainingMinor !== amountMinor) throw workflowError('Pending loan principal does not match its remaining balance.', 409);
         if (!boolFlag(user.is_verified)) {
-          const userKyc = await tx.list('kyc', [{ field: 'user_id', value: userId }], { limit: 1000 });
+          const userKyc = await listByOwnerIds(tx, 'kyc', ownerIds, [], { limit: 1000 });
           if (userKyc.length >= 1000 || !userKyc.some((item) => item.status === 'approved')) throw workflowError('An approved KYC record is required before loan disbursement.', 409);
         }
         const accountId = loan.account_id ? requireId(loan.account_id, 'account id') : decision.accountId;
         if (!accountId) throw workflowError('Select the customer account that will receive the disbursement.');
         if (decision.accountId && loan.account_id && decision.accountId !== String(loan.account_id)) throw workflowError('Disbursement account must match the account selected with the application.', 409);
         const account = await tx.get('accounts', accountId);
-        if (!account || String(account.user_id) !== userId) throw workflowError('Disbursement account ownership could not be confirmed.', 409);
+        if (!recordHasOwnerId(account, ownerIds)) throw workflowError('Disbursement account ownership could not be confirmed.', 409);
         assertActiveAccount(account, 'receive a loan disbursement');
         const { balanceMinor, availableMinor } = accountMoney(account);
         const newBalanceMinor = balanceMinor + amountMinor, newAvailableMinor = availableMinor + amountMinor;
@@ -882,18 +911,18 @@ function createAdminWorkflows(repo, { clock = () => new Date().toISOString(), id
           settlement_reference: decision.settlementReference, updated_at: createdAt
         });
         tx.create('transactions', transactionId, {
-          user_id: userId, account_id: accountId, transaction_type: 'loan_disbursement', amount_minor: amountMinor,
+          user_id: ownerUid, account_id: accountId, transaction_type: 'loan_disbursement', amount_minor: amountMinor,
           currency, description: `${String(loan.loan_type)} disbursement - Loan #${target}`, reference: decision.settlementReference,
           settlement_reference: decision.settlementReference,
           status: 'completed', approved_by: actor, approved_at: createdAt, created_at: createdAt
         });
         tx.create('ledger_entries', ledgerId, {
-          user_id: userId, account_id: accountId, transaction_id: transactionId, reference_id: target,
+          user_id: ownerUid, account_id: accountId, transaction_id: transactionId, reference_id: target,
           entry_type: 'loan_disbursement', amount_minor: amountMinor, balance_after_minor: newBalanceMinor,
           available_after_minor: newAvailableMinor, currency, status: 'completed', description: decision.reason, created_at: createdAt
         });
         tx.create('audit_logs', auditId, makeAudit({ actorId: actor, action: 'approve_loan_disbursement', targetType: 'loan', targetId: target, details: { user_id: userId, account_id: accountId, transaction_id: transactionId, amount_minor: amountMinor, currency, settlement_reference: decision.settlementReference, reason: decision.reason }, ipAddress, createdAt }));
-        tx.create('notifications', notificationId, makeNotification({ userId, title: 'Loan approved and disbursed', message: `Your ${String(loan.loan_type)} was approved and credited to your account.`, type: 'success', createdAt, idFactory: () => notificationId }));
+        tx.create('notifications', notificationId, makeNotification({ userId: ownerUid, title: 'Loan approved and disbursed', message: `Your ${String(loan.loan_type)} was approved and credited to your account.`, type: 'success', createdAt, idFactory: () => notificationId }));
         return { changed: true, status: 'disbursed', transactionId, accountId };
       });
       return result.result;

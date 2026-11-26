@@ -33,6 +33,7 @@ function safeSessionData(session) {
   const data = { ...session };
   delete data.user;
   delete data.userId;
+  delete data.profileId;
   return data;
 }
 
@@ -55,6 +56,7 @@ module.exports = function firebaseSession(req, res, next) {
     // Identity and authorization are re-derived from a verified Firebase ID token on each request.
     delete data.user;
     delete data.userId;
+    delete data.profileId;
     req.session = new Proxy(data, {
       set(target, key, value) {
         dirty = true;
@@ -109,6 +111,7 @@ async function persistSession(req, res) {
 
 module.exports.COOKIE_NAME = COOKIE_NAME;
 module.exports.ONE_DAY_SECONDS = ONE_DAY_SECONDS;
+module.exports.safeSessionData = safeSessionData;
 module.exports.assertSessionEncryptionReady = async function assertSessionEncryptionReady() {
   const key = await encryptionKey();
   const { EncryptJWT } = await jose();

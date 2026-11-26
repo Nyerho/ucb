@@ -26,14 +26,15 @@ service cloud.firestore {
     }
 
     function isActiveAdmin() {
-      return isAdmin() && (!('active' in adminData()) || adminData().active == true);
+      return isAdmin()
+        && ('active' in adminData())
+        && adminData().active == true
+        && ('role' in adminData())
+        && adminData().role in ['admin', 'super_admin', 'owner'];
     }
 
     function isSuperAdmin() {
-      return isActiveAdmin() && (
-        !('role' in adminData()) ||
-        adminData().role in ['super_admin', 'owner']
-      );
+      return isActiveAdmin() && adminData().role in ['super_admin', 'owner'];
     }
 
     function userDoc(userId) {
@@ -43,8 +44,13 @@ service cloud.firestore {
     function ownsUserData(userId) {
       return isOwnUser(userId) || (
         signedIn() &&
-        exists(userPath(userId)) &&
-        get(userPath(userId)).data.auth_uid == request.auth.uid
+        userDoc(userId) != null &&
+        userDoc(userId).firebase_uid == request.auth.uid &&
+        userDoc(userId).firebase_uid_verified_at is string &&
+        userDoc(userId).firebase_uid_verified_at != '' &&
+        (!('firebaseUid' in userDoc(userId)) || userDoc(userId).firebaseUid == request.auth.uid) &&
+        (!('uid' in userDoc(userId)) || userDoc(userId).uid == request.auth.uid) &&
+        (!('auth_uid' in userDoc(userId)) || userDoc(userId).auth_uid == request.auth.uid)
       );
     }
 
@@ -91,18 +97,30 @@ service cloud.firestore {
       ]);
     }
 
+    function protectedUidBindingFields() {
+      return [
+        'firebase_uid',
+        'firebaseUid',
+        'uid',
+        'auth_uid',
+        'firebase_uid_verified_at'
+      ];
+    }
+
     function validUserCreate(userId) {
       return ownsUserData(userId)
         && (!('user_id' in request.resource.data) || request.resource.data.user_id == userId)
         && request.resource.data.is_admin == 0
-        && request.resource.data.is_frozen == 0;
+        && request.resource.data.is_frozen == 0
+        && !request.resource.data.keys().hasAny(protectedUidBindingFields());
     }
 
     function validUserSelfUpdate() {
       return request.resource.data.is_admin == resource.data.is_admin
         && request.resource.data.is_verified == resource.data.is_verified
         && request.resource.data.is_frozen == resource.data.is_frozen
-        && request.resource.data.role == resource.data.role;
+        && request.resource.data.role == resource.data.role
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(protectedUidBindingFields());
     }
 
     function validOwnerOnlyDoc() {

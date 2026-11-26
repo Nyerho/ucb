@@ -4,6 +4,7 @@
 <%
   const frozen = customer.is_frozen === true || Number(customer.is_frozen) === 1;
   const disabled = customer.disabled === true || Number(customer.disabled) === 1;
+  const hasVerifiedUidBinding = Boolean(customer.firebaseUid);
   const total = Number(totalBalance || 0);
 %>
 <div class="card" style="margin-bottom:20px;">
@@ -11,7 +12,7 @@
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap;">
       <div>
         <h2 style="margin:0;"><%= customer.first_name || '' %> <%= customer.last_name || '' %></h2>
-        <div style="margin-top:6px;color:var(--text-gray);">UID <%= customer.id %> · <%= customer.email || 'No email on record' %> · <%= customer.phone || 'No phone on record' %></div>
+        <div style="margin-top:6px;color:var(--text-gray);">Firebase UID <%= customer.firebaseUid || 'Awaiting verified Firebase sign-in' %> · Profile document <%= customer.profileId || customer.id %> · <%= customer.email || 'No email on record' %> · <%= customer.phone || 'No phone on record' %></div>
         <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
           <span class="status-badge status-<%= disabled ? 'rejected' : (frozen ? 'frozen' : 'active') %>"><%= disabled ? 'Disabled' : (frozen ? 'Frozen' : 'Active') %></span>
           <span class="status-badge status-<%= customer.is_verified ? 'completed' : 'pending' %>"><%= customer.is_verified ? 'KYC verified' : 'KYC unverified' %></span>
@@ -19,6 +20,7 @@
         </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <% if (hasVerifiedUidBinding) { %>
         <button type="button" class="btn btn-primary" onclick="document.getElementById('editUserModal').classList.add('active')">Edit profile</button>
         <% if (!(customer.is_admin === true || Number(customer.is_admin) === 1 || customer.role === 'admin')) { %>
           <% if (!disabled) { %>
@@ -31,15 +33,19 @@
             <input type="text" name="reason" required minlength="8" maxlength="500" class="form-input" aria-label="Reason for customer access change" placeholder="Reason (8–500 chars)" style="width:220px;">
             <button type="submit" class="btn <%= disabled ? 'btn-success' : 'btn-danger' %>"><%= disabled ? 'Restore customer' : 'Disable access' %></button>
           </form>
-          <% if (!disabled) { %>
-            <form method="POST" action="/admin/users/<%= encodeURIComponent(customer.id) %>/password-reset" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-              <input type="text" name="reason" required minlength="8" maxlength="500" class="form-input" aria-label="Reason for password-reset email" placeholder="Reason (8–500 chars)" style="width:220px;">
-              <button type="submit" class="btn btn-outline">Send reset email</button>
-            </form>
-          <% } %>
+          <% if (!disabled) { %><span class="form-hint">For security, ask the customer to use the secure Forgot Password flow.</span><% } %>
+        <% } %>
+        <% } else { %>
+          <span style="color:var(--text-light);">Customer sign-in verification is required before admin actions.</span>
         <% } %>
       </div>
     </div>
+    <% if (!hasVerifiedUidBinding) { %>
+      <div class="alert alert-warning" role="status" style="margin-top:16px;margin-bottom:0;">
+        <span class="alert-icon">!</span><div class="alert-content"><div class="alert-title">Verified Firebase identity link required</div>
+        <p class="alert-message" style="margin:0;">This numeric legacy profile is not yet linked to a verified Firebase UID. Its financial, card, loan, KYC, and notification records are withheld, and administrator actions are blocked until the customer signs in with a verified Firebase email matching this profile.</p></div>
+      </div>
+    <% } %>
     <div class="stat-cards" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:22px;padding-top:20px;border-top:1px solid var(--border);">
       <div class="mini-stat"><div class="mini-stat-label">Aggregate balance</div><div class="mini-stat-value"><%= currency(total) %></div></div>
       <div class="mini-stat"><div class="mini-stat-label">Accounts</div><div class="mini-stat-value"><%= (accounts || []).length %></div></div>
@@ -56,7 +62,7 @@
 
 <div class="card" style="margin-bottom:20px;">
   <div class="card-header"><h3 class="card-title">Accounts</h3></div>
-  <% if (!disabled) { %>
+  <% if (!disabled && hasVerifiedUidBinding) { %>
     <div class="card-body" style="border-bottom:1px solid var(--border);">
       <form method="POST" action="/admin/users/<%= encodeURIComponent(customer.id) %>/accounts" class="form-grid">
         <input type="hidden" name="operation_id" value="<%= operationId %>">
@@ -139,6 +145,7 @@
   </div>
 </div>
 
+<% if (hasVerifiedUidBinding) { %>
 <div class="modal" id="editUserModal"><div class="modal-dialog" style="max-width:640px;">
   <div class="modal-header"><h3 class="modal-title">Edit customer profile</h3>
     <button type="button" class="modal-close" onclick="document.getElementById('editUserModal').classList.remove('active')">×</button></div>
@@ -168,6 +175,7 @@
     </div>
   </form>
 </div></div>
+<% } %>
 
 <style>
 .mini-stat{padding:14px;background:var(--bg-gray);border-radius:var(--radius);}

@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const { createFirestoreRepository } = require('../services/firestore-rest');
 const { toMinorUnits, fromMinorUnits } = require('../services/money');
 const { requireAuth, requireVerified, getAccountStatusMessage } = require('../middleware/auth');
+const { ownerIdsForRequest, listByOwnerIds, recordHasOwnerId } = require('../services/owner-records');
 
 const router = express.Router();
 const repo = createFirestoreRepository();
@@ -32,7 +33,8 @@ function buildCardTypeViewModel(cardType) {
 }
 
 const uid = (req) => String(req.session.userId);
-async function userProfile(req) { return req.user || await repo.get('users', uid(req)); }
+const ownerIds = (req) => ownerIdsForRequest(req);
+async function userProfile(req) { return req.user || await repo.get('users', String(req.session.profileId || req.user?.profileId || req.user?.id || uid(req))); }
 async function notify(userId, title, message, type) {
   await repo.create('notifications', { user_id: String(userId), title, message, type, read: false, created_at: new Date().toISOString() }, crypto.randomUUID());
 }
@@ -46,8 +48,12 @@ function cardView(card, account) {
 
 router.get('/', requireAuth, async (req, res, next) => {
   try {
-    const [storedCards, user] = await Promise.all([repo.list('cards', [{ field: 'user_id', value: uid(req) }], { orderBy: { field: 'requested_at', direction: 'desc' } }), userProfile(req)]);
-    const cards = await Promise.all(storedCards.map(async (card) => cardView(card, await repo.get('accounts', String(card.account_id)))));
+    const owners = ownerIds(req);
+    const [storedCards, user] = await Promise.all([listByOwnerIds(repo, 'cards', owners, [], { orderBy: { field: 'requested_at', direction: 'desc' } }), userProfile(req)]);
+    const cards = await Promise.all(storedCards.map(async (card) => {
+      const linked = await repo.get('accounts', String(card.account_id));
+      return cardView(card, recordHasOwnerId(linked, owners) ? linked : null);
+    }));
     res.render('cards/index', { title: 'My Cards - United Credit Bank', page: 'cards', cards, cardTypes: CARD_TYPES.map(buildCardTypeViewModel), user });
   } catch (error) { next(error); }
 });
@@ -59,9 +65,10 @@ router.get('/apply/new', requireAuth, (req, res) => {
 
 router.get('/apply', requireAuth, requireVerified, async (req, res, next) => {
   try {
+    const owners = ownerIds(req);
     const [accounts, approvedKyc, user] = await Promise.all([
-      repo.list('accounts', [{ field: 'user_id', value: uid(req) }]),
-      repo.list('kyc', [{ field: 'user_id', value: uid(req) }, { field: 'status', value: 'approved' }], { limit: 1 }), userProfile(req)
+      listByOwnerIds(repo, 'accounts', owners),
+      listByOwnerIds(repo, 'kyc', owners, [{ field: 'status', value: 'approved' }], { limit: 1 }), userProfile(req)
     ]);
     const eligibleAccounts = accounts.filter((account) => !getAccountStatusMessage(account, 'apply for a card'));
     const cardTypes = CARD_TYPES.map(buildCardTypeViewModel);
@@ -75,8 +82,9 @@ router.post('/apply', requireAuth, requireVerified, async (req, res, next) => {
     const { card_type, account_id, delivery_address, pin, cardholder_name, credit_limit } = req.body;
     const type = CARD_TYPES.find((item) => item.type === card_type);
     if (!type) { req.session.error = 'Invalid card type.'; return res.redirect('/cards/apply'); }
+    const owners = ownerIds(req);
     const [account, user] = await Promise.all([repo.get('accounts', String(account_id)), userProfile(req)]);
-    if (!account || String(account.user_id) !== uid(req)) { req.session.error = 'Invalid account selected.'; return res.redirect('/cards/apply'); }
+    if (!recordHasOwnerId(account, owners)) { req.session.error = 'Invalid account selected.'; return res.redirect('/cards/apply'); }
     const restriction = getAccountStatusMessage(account, 'apply for a card');
     if (restriction) { req.session.error = restriction; return res.redirect('/cards/apply'); }
     if (credit_limit && !type.type.includes('Credit')) { req.session.error = 'Invalid credit limit.'; return res.redirect('/cards/apply'); }
@@ -103,33 +111,35 @@ router.post('/apply', requireAuth, requireVerified, async (req, res, next) => {
 router.get('/:id', requireAuth, async (req, res, next) => {
   try {
     const [card, user] = await Promise.all([repo.get('cards', String(req.params.id)), userProfile(req)]);
-    if (!card || String(card.user_id) !== uid(req)) { req.session.error = 'Card not found.'; return res.redirect('/cards'); }
-    const account = await repo.get('accounts', String(card.account_id));
+    const owners = ownerIds(req);
+    if (!recordHasOwnerId(card, owners)) { req.session.error = 'Card not found.'; return res.redirect('/cards'); }
+    const linked = await repo.get('accounts', String(card.account_id));
+    const account = recordHasOwnerId(linked, owners) ? linked : null;
     res.render('cards/detail', { title: `${card.card_type} - United Credit Bank`, page: 'cards', card: cardView(card, account), user });
   } catch (error) { next(error); }
 });
 
-async function mutateCard(req, res, mutator) {
-  const id = String(req.params.id);
-  await repo.runTransaction(async (tx) => {
+async function mutateCard(repository, req, mutator) {
+  const id = String(req.params.id), owners = ownerIds(req);
+  const result = await repository.runTransaction(async (tx) => {
     const card = await tx.get('cards', id);
-    if (!card || String(card.user_id) !== uid(req)) return null;
+    if (!recordHasOwnerId(card, owners)) return null;
     const changes = await mutator(card);
     if (!changes) return card;
     tx.update('cards', id, { ...changes.fields, updated_at: new Date().toISOString() });
     if (changes.notification) tx.create('notifications', crypto.randomUUID(), { user_id: uid(req), ...changes.notification, read: false, created_at: new Date().toISOString() });
     return { ...card, ...changes.fields };
   });
-  return repo.get('cards', id);
+  return result?.result || null;
 }
 router.post('/:id/activate', requireAuth, async (req, res, next) => {
-  try { const card = await mutateCard(req, res, (item) => item.status === 'approved' ? { fields: { status: 'active' }, notification: { title: 'Card Activated', message: `Your ${item.card_type} is now active.`, type: 'success' } } : null);
+  try { const card = await mutateCard(repo, req, (item) => item.status === 'approved' ? { fields: { status: 'active' }, notification: { title: 'Card Activated', message: `Your ${item.card_type} is now active.`, type: 'success' } } : null);
     if (!card || card.status !== 'active') { req.session.error = 'Cannot activate this card.'; return res.redirect('/cards'); }
     req.session.success = 'Card activated successfully!'; res.redirect(`/cards/${req.params.id}`);
   } catch (error) { next(error); }
 });
 router.post('/:id/freeze', requireAuth, async (req, res, next) => {
-  try { const card = await mutateCard(req, res, (item) => { const status = item.status === 'frozen' ? 'active' : 'frozen'; return { fields: { status }, notification: { title: `Card ${status === 'frozen' ? 'Frozen' : 'Unfrozen'}`, message: `Your ${item.card_type} status has been updated.`, type: 'info' } }; });
+  try { const card = await mutateCard(repo, req, (item) => { const status = item.status === 'frozen' ? 'active' : 'frozen'; return { fields: { status }, notification: { title: `Card ${status === 'frozen' ? 'Frozen' : 'Unfrozen'}`, message: `Your ${item.card_type} status has been updated.`, type: 'info' } }; });
     if (!card) { req.session.error = 'Card not found.'; return res.redirect('/cards'); }
     req.session.success = `Card ${card.status === 'frozen' ? 'frozen' : 'unfrozen'} successfully.`; res.redirect(`/cards/${req.params.id}`);
   } catch (error) { next(error); }
@@ -137,7 +147,7 @@ router.post('/:id/freeze', requireAuth, async (req, res, next) => {
 router.get('/:id/freeze', (_req, res) => res.sendStatus(405));
 router.get('/:id/unfreeze', (_req, res) => res.sendStatus(405));
 router.post('/:id/report-lost', requireAuth, async (req, res, next) => {
-  try { const card = await mutateCard(req, res, (item) => ({ fields: { status: 'lost_stolen' }, notification: { title: 'Card Reported Lost/Stolen', message: `Your ${item.card_type} has been blocked. A replacement will be sent.`, type: 'warning' } }));
+  try { const card = await mutateCard(repo, req, (item) => ({ fields: { status: 'lost_stolen' }, notification: { title: 'Card Reported Lost/Stolen', message: `Your ${item.card_type} has been blocked. A replacement will be sent.`, type: 'warning' } }));
     if (!card) { req.session.error = 'Card not found.'; return res.redirect('/cards'); }
     req.session.success = 'Card reported lost/stolen. A replacement card will be issued.'; res.redirect('/cards');
   } catch (error) { next(error); }
@@ -147,16 +157,17 @@ router.post('/:id/set-pin', requireAuth, async (req, res, next) => {
   try {
     const { pin } = req.body;
     if (!pin || String(pin).length !== 4 || !/^\d+$/.test(String(pin))) { req.session.error = 'PIN must be exactly 4 digits.'; return res.redirect(`/cards/${req.params.id}`); }
-    const card = await mutateCard(req, res, (item) => item.status === 'active' ? { fields: { pin_hash: bcrypt.hashSync(String(pin), 8) } } : null);
+    const card = await mutateCard(repo, req, (item) => item.status === 'active' ? { fields: { pin_hash: bcrypt.hashSync(String(pin), 8) } } : null);
     if (!card || card.status !== 'active') { req.session.error = 'Cannot set PIN for this card.'; return res.redirect('/cards'); }
     req.session.success = 'PIN updated successfully!'; res.redirect(`/cards/${req.params.id}`);
   } catch (error) { next(error); }
 });
 router.post('/:id/replace', requireAuth, async (req, res, next) => {
-  try { const card = await mutateCard(req, res, () => ({ fields: { status: 'replacement_issued' } }));
+  try { const card = await mutateCard(repo, req, () => ({ fields: { status: 'replacement_issued' } }));
     if (!card) { req.session.error = 'Card not found.'; return res.redirect('/cards'); }
     req.session.success = 'Replacement card requested. It will be mailed within 5-7 business days.'; res.redirect('/cards');
   } catch (error) { next(error); }
 });
 router.get('/:id/replace', (_req, res) => res.sendStatus(405));
 module.exports = router;
+module.exports.mutateCard = mutateCard;

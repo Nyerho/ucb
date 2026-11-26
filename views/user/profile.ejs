@@ -56,7 +56,8 @@
         <div class="form-grid">
           <div class="form-group">
             <label class="form-label">Email *</label>
-            <input type="email" name="email" required value="<%= user.email %>" class="form-input">
+            <input type="email" name="email" required readonly value="<%= user.email %>" class="form-input">
+            <span class="form-hint">Email changes require a verified Firebase account workflow. Please contact support.</span>
           </div>
           <div class="form-group">
             <label class="form-label">Phone *</label>

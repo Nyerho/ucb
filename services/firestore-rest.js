@@ -175,7 +175,7 @@ async function firestoreRequest(path, { method = 'GET', body, query } = {}) {
 function decodeDocument(document) {
   if (!document) return null;
   const id = document.name.split('/').pop();
-  return { id: decodeURIComponent(id), ...decodeFields(document.fields || {}) };
+  return { ...decodeFields(document.fields || {}), id: decodeURIComponent(id) };
 }
 
 function encodeFields(data) {

@@ -7,20 +7,20 @@ const { toMinorUnits, readMinorUnits, fromMinorUnits } = require('../services/mo
 const {
   requireAuth,
   requireVerified,
-  getUserAccounts,
   getAccountStatusMessage,
   addNotification
 } = require('../middleware/auth');
 const { sendTransactionActivityEmailById } = require('../services/email');
+const { ownerIdsForRequest, listByOwnerIds, recordHasOwnerId } = require('../services/owner-records');
 
 const router = express.Router();
 const repo = createFirestoreRepository();
 router.use(require('../middleware/production-financial-gate'));
 
 function uid(req) { return String(req.auth.uid); }
-function queueTransactionEmail(txnId, note) {
+function queueTransactionEmail(txnId, note, authenticatedUser) {
   if (!txnId) return;
-  sendTransactionActivityEmailById(txnId, note ? { note } : {}).catch((error) => {
+  sendTransactionActivityEmailById(txnId, { ...(note ? { note } : {}), authenticatedUser }).catch((error) => {
     console.error(`Failed to send transaction email for txn ${txnId}:`, error);
   });
 }
@@ -91,13 +91,14 @@ function failClosed(error, res, message = 'Loan services are temporarily unavail
 
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const loans = await repo.list('loans', [{ field: 'user_id', value: uid(req) }], { orderBy: { field: 'requested_at', direction: 'DESCENDING' }, limit: 100 });
+    const owners = ownerIdsForRequest(req);
+    const loans = await listByOwnerIds(repo, 'loans', owners, [], { orderBy: { field: 'requested_at', direction: 'DESCENDING' }, limit: 100 });
     const viewLoans = await Promise.all(loans.map(async (loan) => {
       const [account, payments] = await Promise.all([
         loan.account_id ? repo.get('accounts', String(loan.account_id)) : null,
         repo.list('loan_payments', [{ field: 'loan_id', value: String(loan.id) }], { orderBy: { field: 'payment_date', direction: 'DESCENDING' }, limit: 250 })
       ]);
-      return { ...loanForView(loan, account), payments: payments.map(paymentForView), status: loan.status === 'disbursed' ? 'active' : loan.status };
+      return { ...loanForView(loan, recordHasOwnerId(account, owners) ? account : null), payments: payments.filter(payment => recordHasOwnerId(payment, owners)).map(paymentForView), status: loan.status === 'disbursed' ? 'active' : loan.status };
     }));
     return res.render('loans/index', { title: 'My Loans - United Credit Bank', page: 'loans', loans: viewLoans, loanTypes: LOAN_TYPES.map(buildLoanTypeViewModel) });
   } catch (error) { return failClosed(error, res); }
@@ -110,10 +111,10 @@ router.get('/apply/new', requireAuth, (req, res) => {
 
 router.get('/apply', requireAuth, requireVerified, async (req, res) => {
   try {
-    const uidValue = uid(req);
+    const owners = ownerIdsForRequest(req);
     const [accounts, kyc, user] = await Promise.all([
-      getUserAccounts(uidValue, { operableOnly: true }),
-      repo.list('kyc', [{ field: 'user_id', value: uidValue }, { field: 'status', value: 'approved' }], { limit: 1 }),
+      listByOwnerIds(repo, 'accounts', owners, [{ field: 'status', value: 'active' }]),
+      listByOwnerIds(repo, 'kyc', owners, [{ field: 'status', value: 'approved' }], { limit: 1 }),
       Promise.resolve(req.user || null)
     ]);
     const loanTypes = LOAN_TYPES.map(buildLoanTypeViewModel);
@@ -146,7 +147,7 @@ router.post('/apply', requireAuth, requireVerified, async (req, res) => {
     const accountId = req.body.account_id ? String(req.body.account_id) : null;
     if (accountId) {
       const account = await repo.get('accounts', accountId);
-      if (!account || String(account.user_id) !== uid(req)) throw new TypeError('Invalid account selected.');
+      if (!recordHasOwnerId(account, ownerIdsForRequest(req))) throw new TypeError('Invalid account selected.');
     }
     const emiMinor = toMinorUnits(calculateEMI(fromMinorUnits(amountMinor), rate, term).toFixed(2));
     const totalMinor = emiMinor * term;
@@ -173,21 +174,23 @@ router.post('/apply', requireAuth, requireVerified, async (req, res) => {
 
 router.get('/:id', requireAuth, async (req, res) => {
   try {
+    const owners = ownerIdsForRequest(req);
     const loan = await repo.get('loans', String(req.params.id));
-    if (!loan || String(loan.user_id) !== uid(req)) { req.session.error = 'Loan not found.'; return res.redirect('/loans'); }
-    const [account, rawPayments, accounts] = await Promise.all([
+    if (!recordHasOwnerId(loan, owners)) { req.session.error = 'Loan not found.'; return res.redirect('/loans'); }
+    const [linkedAccount, rawPayments, accounts] = await Promise.all([
       loan.account_id ? repo.get('accounts', String(loan.account_id)) : null,
       repo.list('loan_payments', [{ field: 'loan_id', value: String(loan.id) }], { orderBy: { field: 'payment_date', direction: 'DESCENDING' }, limit: 250 }),
-      getUserAccounts(uid(req))
+      listByOwnerIds(repo, 'accounts', owners)
     ]);
+    const account = recordHasOwnerId(linkedAccount, owners) ? linkedAccount : null;
     const viewLoan = loanForView(loan, account);
     if (viewLoan.status === 'disbursed') viewLoan.status = 'active';
-    return res.render('loans/detail', { title: `${loan.loan_type} Details - United Credit Bank`, page: 'loans', loan: viewLoan, payments: rawPayments.map(paymentForView), calculateEMI, accounts: accounts.map(accountForView) });
+    return res.render('loans/detail', { title: `${loan.loan_type} Details - United Credit Bank`, page: 'loans', loan: viewLoan, payments: rawPayments.filter(payment => recordHasOwnerId(payment, owners)).map(paymentForView), calculateEMI, accounts: accounts.map(accountForView) });
   } catch (error) { return failClosed(error, res); }
 });
 
 router.post('/:id/payment', requireAuth, async (req, res) => {
-  const uidValue = uid(req);
+  const uidValue = uid(req), owners = ownerIdsForRequest(req);
   const loanId = String(req.params.id);
   const accountId = String(req.body.from_account || req.body.account_id || '');
   let txnId;
@@ -201,8 +204,8 @@ router.post('/:id/payment', requireAuth, async (req, res) => {
     let loanType = '';
     await repo.runTransaction(async (tx) => {
       const [loan, account] = await Promise.all([tx.get('loans', loanId), tx.get('accounts', accountId)]);
-      if (!loan || String(loan.user_id) !== uidValue || !['disbursed', 'active'].includes(String(loan.status))) throw Object.assign(new Error('Cannot make payment on this loan.'), { userError: true });
-      if (!account || String(account.user_id) !== uidValue) throw Object.assign(new Error('Invalid account selected.'), { userError: true });
+      if (!recordHasOwnerId(loan, owners) || !['disbursed', 'active'].includes(String(loan.status))) throw Object.assign(new Error('Cannot make payment on this loan.'), { userError: true });
+      if (!recordHasOwnerId(account, owners)) throw Object.assign(new Error('Invalid account selected.'), { userError: true });
       const restriction = getAccountStatusMessage(accountForView(account), 'make loan repayments');
       if (restriction) throw Object.assign(new Error(restriction), { userError: true });
       const availableMinor = readMinorUnits(account, 'available_balance_minor', 'available_balance', readMinorUnits(account, 'balance_minor', 'balance'));
@@ -218,7 +221,7 @@ router.post('/:id/payment', requireAuth, async (req, res) => {
       tx.create('ledger_entries', ledgerId, { user_id: uidValue, account_id: accountId, transaction_id: txnId, entry_type: 'loan_payment', amount_minor: -amountMinor, balance_after_minor: balanceMinor - amountMinor, currency: 'AUD', status: 'completed', reference_id: loanId, created_at: now });
     });
     await addNotification(uidValue, 'Loan Payment Made', `Payment of $${fromMinorUnits(amountMinor).toLocaleString()} made to ${loanType}.`, 'success');
-    queueTransactionEmail(txnId, 'Your loan repayment was applied successfully.');
+    queueTransactionEmail(txnId, 'Your loan repayment was applied successfully.', req.user);
     req.session.success = 'Payment successful!';
     return res.redirect(`/loans/${loanId}`);
   } catch (error) {

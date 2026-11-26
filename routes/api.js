@@ -4,6 +4,7 @@ const { createFirestoreRepository } = require('../services/firestore-rest');
 const { readMinorUnits, fromMinorUnits } = require('../services/money');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { getRuntimeEnv } = require('../lib/runtime-env');
+const { ownerIdsForRequest, listByOwnerIds, recordHasOwnerId } = require('../services/owner-records');
 
 const router = express.Router();
 const repo = createFirestoreRepository();
@@ -24,14 +25,13 @@ function withAccountDisplay(account) {
 
 router.get('/user/dashboard-stats', requireAuth, async (req, res) => {
   try {
-    const userId = req.session.userId;
-    const accounts = await repo.list('accounts', [{ field: 'user_id', value: userId }]);
+    const owners = ownerIdsForRequest(req);
+    const accounts = await listByOwnerIds(repo, 'accounts', owners);
     const totalBalance = accounts.reduce((sum, account) => sum + displayMoney(account, 'balance'), 0);
     const totalAvailable = accounts.reduce((sum, account) => sum + displayMoney(account, 'available_balance'), 0);
-    const transactions = await repo.list('transactions', [
-      { field: 'user_id', value: userId },
-      { field: 'status', value: 'completed' }
-    ], { orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit: 1000 });
+    const transactions = await listByOwnerIds(repo, 'transactions', owners,
+      [{ field: 'status', value: 'completed' }],
+      { orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit: 1000 });
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const totals = new Map();
     for (const transaction of transactions) {
@@ -56,7 +56,7 @@ router.get('/user/dashboard-stats', requireAuth, async (req, res) => {
 
 router.get('/user/notifications', requireAuth, async (req, res) => {
   try {
-    const notifications = await repo.list('notifications', [{ field: 'user_id', value: req.session.userId }], {
+    const notifications = await listByOwnerIds(repo, 'notifications', ownerIdsForRequest(req), [], {
       orderBy: { field: 'created_at', direction: 'DESCENDING' }, limit: 20
     });
     const unread = notifications.filter((item) => item.is_read === false || item.is_read === 0).length;
@@ -70,7 +70,7 @@ router.get('/user/notifications', requireAuth, async (req, res) => {
 router.post('/user/notifications/:id/read', requireAuth, async (req, res) => {
   try {
     const notification = await repo.get('notifications', req.params.id);
-    if (notification && notification.user_id === req.session.userId) {
+    if (notification && recordHasOwnerId(notification, ownerIdsForRequest(req))) {
       await repo.update('notifications', req.params.id, { is_read: true });
     }
     res.json({ success: true });
@@ -82,7 +82,7 @@ router.post('/user/notifications/:id/read', requireAuth, async (req, res) => {
 
 router.post('/user/notifications/read-all', requireAuth, async (req, res) => {
   try {
-    const notifications = await repo.list('notifications', [{ field: 'user_id', value: req.session.userId }]);
+    const notifications = await listByOwnerIds(repo, 'notifications', ownerIdsForRequest(req));
     await Promise.all(notifications.filter((item) => item.is_read !== true && item.is_read !== 1)
       .map((item) => repo.update('notifications', item.id, { is_read: true })));
     res.json({ success: true });
@@ -94,8 +94,7 @@ router.post('/user/notifications/read-all', requireAuth, async (req, res) => {
 
 router.get('/user/accounts-summary', requireAuth, async (req, res) => {
   try {
-    const accounts = await repo.list('accounts', [
-      { field: 'user_id', value: req.session.userId },
+    const accounts = await listByOwnerIds(repo, 'accounts', ownerIdsForRequest(req), [
       { field: 'status', value: 'active' }
     ]);
     res.json({ accounts: accounts.map((account) => {
@@ -112,7 +111,7 @@ router.get('/user/accounts-summary', requireAuth, async (req, res) => {
 router.get('/search/beneficiaries', requireAuth, async (req, res) => {
   try {
     const q = String(req.query.q || '').toLowerCase();
-    const beneficiaries = await repo.list('beneficiaries', [{ field: 'user_id', value: req.session.userId }]);
+    const beneficiaries = await listByOwnerIds(repo, 'beneficiaries', ownerIdsForRequest(req));
     const results = beneficiaries.filter((item) => String(item.name || '').toLowerCase().includes(q)
       || String(item.account_number || '').toLowerCase().includes(q)).slice(0, 10);
     res.json({ results });

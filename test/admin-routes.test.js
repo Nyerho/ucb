@@ -4,7 +4,78 @@ const crypto = require('node:crypto');
 const router = require('../routes/admin');
 const { requireAdmin, isAdminUser } = require('../middleware/auth');
 const requireSessionEncryptionReady = require('../middleware/session-encryption-ready');
-const { resetServiceTokenCacheForTests } = require('../services/firestore-rest');
+const { resetServiceTokenCacheForTests, toFirestoreValue } = require('../services/firestore-rest');
+
+function firestoreDocument(collection, record) {
+  const { id, __storedIdField, ...fields } = record;
+  if (__storedIdField !== undefined) fields.id = __storedIdField;
+  return {
+    name: `projects/ucb-admin-route-test/databases/(default)/documents/${collection}/${id}`,
+    fields: Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, toFirestoreValue(value)]))
+  };
+}
+
+function collectFieldFilters(where, output = []) {
+  if (!where) return output;
+  if (where.fieldFilter) output.push(where.fieldFilter);
+  for (const filter of where.compositeFilter?.filters || []) collectFieldFilters(filter, output);
+  return output;
+}
+
+function mockFirestore(fixtures) {
+  const privateKey = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    publicKeyEncoding: { type: 'spki', format: 'pem' }
+  }).privateKey;
+  const envNames = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'];
+  const previousEnv = Object.fromEntries(envNames.map(name => [name, process.env[name]]));
+  const previousFetch = global.fetch;
+  Object.assign(process.env, {
+    FIREBASE_PROJECT_ID: 'ucb-admin-route-test',
+    FIREBASE_CLIENT_EMAIL: 'worker-test@example.invalid',
+    FIREBASE_PRIVATE_KEY: privateKey
+  });
+  resetServiceTokenCacheForTests();
+  const queries = [];
+  global.fetch = async (input, options = {}) => {
+    const url = new URL(String(input));
+    if (url.href.startsWith('https://oauth2.googleapis.com/token')) {
+      return { ok: true, status: 200, json: async () => ({ access_token: 'test-access-token', expires_in: 3600 }) };
+    }
+    if (url.pathname.endsWith(':runQuery')) {
+      const query = JSON.parse(options.body).structuredQuery;
+      queries.push(query);
+      const collection = query.from[0].collectionId;
+      const filters = collectFieldFilters(query.where);
+      const records = (fixtures[collection] || []).filter(record => filters.every(filter => {
+        const expected = filter.value.stringValue ?? filter.value.integerValue ?? filter.value.booleanValue;
+        return record[filter.field.fieldPath] === expected;
+      }));
+      return { ok: true, status: 200, json: async () => records.map(record => ({ document: firestoreDocument(collection, record) })) };
+    }
+    const match = /\/documents\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+    if (match) {
+      const [, collection, encodedId] = match;
+      const docId = decodeURIComponent(encodedId);
+      const record = (fixtures[collection] || []).find(item => String(item.id) === docId);
+      if (record) return { ok: true, status: 200, json: async () => firestoreDocument(collection, record) };
+      return { ok: false, status: 404, json: async () => ({ error: { status: 'NOT_FOUND' } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  return {
+    queries,
+    restore() {
+      global.fetch = previousFetch;
+      for (const name of envNames) {
+        if (previousEnv[name] === undefined) delete process.env[name];
+        else process.env[name] = previousEnv[name];
+      }
+      resetServiceTokenCacheForTests();
+    }
+  };
+}
 
 test('admin router registers only the reviewed safe POST handlers', () => {
   const writes = router.stack.filter(layer => layer.route && layer.route.methods.post);
@@ -117,6 +188,93 @@ test('admin dashboard renders an admins-only identity from the verified request 
       else process.env[name] = previousEnv[name];
     }
     resetServiceTokenCacheForTests();
+  }
+});
+
+test('admin customer list and detail resolve numeric profiles and query only the exact UID/profile-ID pair', async () => {
+  const fixtures = {
+    users: [{ id: '3', __storedIdField: 'ucb-3', firebase_uid: 'ucb-3', firebase_uid_verified_at: '2026-11-25T10:00:00.000Z', first_name: 'Ada', last_name: 'Customer', email: 'ada@example.test', phone: '+61 400 111 222', is_admin: 0, is_verified: 1, is_frozen: 0, created_at: '2026-11-20T10:00:00.000Z' }],
+    accounts: [
+      { id: 'account-3', user_id: 'ucb-3', account_name: 'Ada Everyday', account_type: 'Everyday Savings', account_number: '12345678', status: 'active', currency: 'AUD', balance_minor: 15000, available_balance_minor: 15000, created_at: '2026-11-21T10:00:00.000Z' },
+      { id: 'account-other', user_id: 'ucb-4', account_name: 'Other Customer Account', account_number: '87654321', created_at: '2026-11-21T10:00:00.000Z' }
+    ],
+    transactions: [
+      { id: 'transaction-3', user_id: 'ucb-3', account_id: 'account-3', transaction_type: 'deposit', amount_minor: 15000, currency: 'AUD', status: 'completed', created_at: '2026-11-21T10:00:00.000Z' },
+      { id: 'transaction-mismatched-account', user_id: 'ucb-3', account_id: 'account-other', transaction_type: 'deposit', amount_minor: 1, currency: 'AUD', status: 'completed', created_at: '2026-11-20T10:00:00.000Z' }
+    ],
+    cards: [{ id: 'card-3', user_id: 'ucb-3', card_type: 'Debit Card', card_number: '4111111111111111', status: 'active', created_at: '2026-11-21T10:00:00.000Z' }],
+    loans: [{ id: 'loan-3', user_id: 'ucb-3', loan_type: 'Personal Loan', loan_amount_minor: 200000, status: 'pending', created_at: '2026-11-21T10:00:00.000Z' }],
+    kyc: [{ id: 'kyc-3', user_id: 'ucb-3', document_type: 'Passport', status: 'pending', submitted_at: '2026-11-21T10:00:00.000Z' }],
+    notifications: [{ id: 'notification-3', user_id: 'ucb-3', title: 'Account notice', created_at: '2026-11-21T10:00:00.000Z' }],
+    audit_logs: []
+  };
+  const firebase = mockFirestore(fixtures);
+  try {
+    const listHandler = router.stack.find(layer => layer.route && layer.route.path === '/users' && layer.route.methods.get).route.stack.at(-1).handle;
+    const listRes = { render(view, locals) { this.view = view; this.locals = locals; return this; } };
+    let nextError;
+    await listHandler({ query: {} }, listRes, error => { nextError = error; });
+    assert.equal(nextError, undefined);
+    assert.equal(listRes.view, 'admin/users');
+    assert.equal(listRes.locals.users[0].id, '3', 'profile document ID remains the customer action target');
+    assert.equal(listRes.locals.users[0].firebaseUid, 'ucb-3');
+    assert.equal(listRes.locals.userAccounts['3'][0].user_id, 'ucb-3');
+    const listAccountQueries = firebase.queries.filter(query => query.from[0].collectionId === 'accounts' && collectFieldFilters(query.where).some(filter => filter.field.fieldPath === 'user_id'));
+    assert.equal(listAccountQueries.length, 2, 'list page must query both exact owner IDs');
+    assert.deepEqual(listAccountQueries.map(query => collectFieldFilters(query.where).find(filter => filter.field.fieldPath === 'user_id').value.stringValue), ['ucb-3', '3']);
+
+    firebase.queries.length = 0;
+    const detailHandler = router.stack.find(layer => layer.route && layer.route.path === '/users/:id' && layer.route.methods.get).route.stack.at(-1).handle;
+    const detailRes = { render(view, locals) { this.view = view; this.locals = locals; return this; }, redirect(path) { this.location = path; return this; } };
+    await detailHandler({ params: { id: 'ucb-3' }, session: {} }, detailRes, error => { nextError = error; });
+    assert.equal(nextError, undefined);
+    assert.equal(detailRes.view, 'admin/user-detail');
+    assert.equal(detailRes.locals.customer.id, '3');
+    assert.equal(detailRes.locals.customer.firebaseUid, 'ucb-3');
+    for (const field of ['accounts', 'transactions', 'cards', 'loans', 'kyc', 'notifications']) {
+      assert.equal(detailRes.locals[field].length, field === 'transactions' ? 2 : 1, `${field} should be found for the Firebase owner`);
+      assert.ok(detailRes.locals[field].every(record => record.user_id === 'ucb-3'));
+    }
+    const mismatchedTransaction = detailRes.locals.transactions.find(record => record.id === 'transaction-mismatched-account');
+    assert.equal(mismatchedTransaction.account_name, '', 'a transaction cannot disclose an unrelated account name');
+    const ownedCollections = new Set(['accounts', 'transactions', 'cards', 'loans', 'kyc', 'notifications']);
+    const ownerQueries = firebase.queries.filter(query => ownedCollections.has(query.from[0].collectionId) && collectFieldFilters(query.where).some(filter => filter.field.fieldPath === 'user_id'));
+    assert.equal(ownerQueries.length, ownedCollections.size * 2);
+    for (const collection of ownedCollections) {
+      const collectionOwners = ownerQueries.filter(query => query.from[0].collectionId === collection).map(query => collectFieldFilters(query.where).find(filter => filter.field.fieldPath === 'user_id').value.stringValue);
+      assert.deepEqual(collectionOwners, ['ucb-3', '3'], `${collection} must query the Firebase UID plus only its exact legacy profile ID`);
+    }
+
+    firebase.queries.length = 0;
+    nextError = undefined;
+    const directRes = { render(view, locals) { this.view = view; this.locals = locals; return this; }, redirect(path) { this.location = path; return this; } };
+    await detailHandler({ params: { id: '3' }, session: {} }, directRes, error => { nextError = error; });
+    assert.equal(nextError, undefined);
+    assert.equal(directRes.locals.customer.id, '3', 'the Firestore document key wins over its stored id field');
+    assert.equal(directRes.locals.customer.firebaseUid, 'ucb-3');
+  } finally {
+    firebase.restore();
+  }
+});
+
+test('admin routes do not associate UID-owned records with an unbound numeric profile', async () => {
+  const firebase = mockFirestore({
+    users: [{ id: '3', first_name: 'Unbound', last_name: 'Customer', email: 'customer@example.test', is_admin: 0 }],
+    accounts: [{ id: 'account-3', user_id: 'ucb-3', account_name: 'Unowned link', created_at: '2026-11-21T10:00:00.000Z' }]
+  });
+  try {
+    const listHandler = router.stack.find(layer => layer.route && layer.route.path === '/users' && layer.route.methods.get).route.stack.at(-1).handle;
+    const listRes = { render(view, locals) { this.view = view; this.locals = locals; return this; } };
+    await listHandler({ query: {} }, listRes, () => {});
+    assert.equal(listRes.locals.users[0].firebaseUid, '');
+    assert.deepEqual(listRes.locals.userAccounts['3'], []);
+
+    const detailHandler = router.stack.find(layer => layer.route && layer.route.path === '/users/:id' && layer.route.methods.get).route.stack.at(-1).handle;
+    const detailRes = { redirect(path) { this.location = path; return this; } };
+    await detailHandler({ params: { id: 'ucb-3' }, session: {} }, detailRes, () => {});
+    assert.equal(detailRes.location, '/admin/users');
+  } finally {
+    firebase.restore();
   }
 });
 

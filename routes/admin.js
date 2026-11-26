@@ -8,6 +8,8 @@ const requireSessionEncryptionReady = require('../middleware/session-encryption-
 const { createAdminWorkflows } = require('../services/admin-workflows');
 const { signUpWithPassword, sendPasswordResetEmail, deleteFirebaseUser } = require('../services/firebase-auth-rest');
 const { downloadObject } = require('../services/firebase-storage');
+const { explicitFirebaseUid, hasConflictingFirebaseUid, hasConflictingFirebaseUidAliases, hasVerifiedFirebaseUidBinding, firebaseOwnerUid, legacyProfileId } = require('../services/firebase-owner-id');
+const { ownerIdsForIdentity, listByOwnerIds, recordHasOwnerId, getOwnedAccount } = require('../services/owner-records');
 const router = express.Router();
 const repo = createFirestoreRepository();
 const adminWorkflows = createAdminWorkflows(repo);
@@ -23,7 +25,33 @@ const display = row => {
 async function rows(collection, filters = [], orderBy = 'created_at', limit = 500, direction = 'DESCENDING') {
   return (await repo.list(collection, filters, { orderBy: { field: orderBy, direction }, limit })).map(display);
 }
-async function getUser(uid) { return display(await repo.get('users', id(uid))); }
+function userOwnerIds(user) {
+  return ownerIdsForIdentity(firebaseOwnerUid(user, user?.id), user?.id, user);
+}
+async function ownerRows(collection, ownerIds, filters = [], orderBy = 'created_at', limit = 500, direction = 'DESCENDING') {
+  return (await listByOwnerIds(repo, collection, ownerIds, filters, { orderBy: { field: orderBy, direction }, limit })).map(display);
+}
+async function ownedAccountForUser(userId, accountId) {
+  const user = await getUser(userId);
+  return user ? getOwnedAccount(repo, accountId, userOwnerIds(user)) : null;
+}
+async function getUser(uid) {
+  const target = id(uid);
+  const direct = await repo.get('users', target);
+  if (direct) {
+    if (hasConflictingFirebaseUidAliases(direct) || (!/^\d+$/.test(target) && hasConflictingFirebaseUid(direct, target))) return null;
+    const profileId = target;
+    const ownerUid = firebaseOwnerUid(direct, profileId);
+    return display({ ...direct, id: profileId, profileId, uid: ownerUid, firebaseUid: ownerUid });
+  }
+  const profileId = legacyProfileId(target);
+  if (!profileId) return null;
+  const profile = await repo.get('users', profileId);
+  if (!profile) return null;
+  const recordedUid = explicitFirebaseUid(profile);
+  if (hasConflictingFirebaseUid(profile, target) || recordedUid !== target || !hasVerifiedFirebaseUidBinding(profile, target)) return null;
+  return display({ ...profile, id: profileId, profileId, uid: target, firebaseUid: target });
+}
 async function withUser(row) {
   const u = await getUser(row.user_id);
   return { ...display(row), first_name: u?.first_name || '', last_name: u?.last_name || '', email: u?.email || '', phone: u?.phone || '', user_name: `${u?.first_name || ''} ${u?.last_name || ''}`.trim() };
@@ -64,7 +92,7 @@ function registerAdminPost(routePath, action, successMessage, redirectPath) {
     try {
       result = await action(req);
       if (result && result.changed === false) req.session.success = 'No changes were needed.';
-      else if (result && result.passwordResetSent === false) req.session.success = 'Customer profile created, but Firebase could not confirm delivery of the password-reset email. Use the audited reset action to try again.';
+      else if (result && result.passwordResetSent === false) req.session.success = 'Customer profile created, but Firebase could not confirm delivery of the password-reset email. Ask the customer to use the secure Forgot Password flow or contact support.';
       else req.session.success = typeof successMessage === 'function' ? successMessage(result, req) : successMessage;
     } catch (error) {
       const status = Number(error && error.status) || 500;
@@ -83,9 +111,9 @@ router.get('/dashboard', async (req, res, next) => {
       repo.list('kyc', [{ field: 'status', value: 'pending' }], { limit: 1000 }),
       repo.list('bill_payments', [{ field: 'status', value: 'pending' }], { limit: 1000 })
     ]);
-    const customers = users.filter(u => !isAdminUser(u) || accounts.some(a => a.user_id === u.id && a.account_type !== 'Admin Account'));
-    const recentTransactions = await Promise.all(transactions.slice(0, 10).map(async t => { const [u,a] = await Promise.all([getUser(t.user_id),repo.get('accounts',id(t.account_id))]); return { ...display(t), first_name:u?.first_name||'',last_name:u?.last_name||'',account_name:a?.account_name||'' }; }));
-    const recentUsers = customers.slice(0,5).map(u => ({...u,account_count:accounts.filter(a=>a.user_id===u.id).length}));
+    const customers = users.filter(u => !isAdminUser(u) || accounts.some(a => recordHasOwnerId(a, userOwnerIds(u)) && a.account_type !== 'Admin Account'));
+    const recentTransactions = await Promise.all(transactions.slice(0, 10).map(async t => { const u=await getUser(t.user_id),a=await ownedAccountForUser(t.user_id,t.account_id); return { ...display(t), first_name:u?.first_name||'',last_name:u?.last_name||'',account_name:a?.account_name||'' }; }));
+    const recentUsers = customers.slice(0,5).map(u => ({...u,account_count:accounts.filter(a=>recordHasOwnerId(a, userOwnerIds(u))).length}));
     const total = (rs,k) => rs.reduce((s,r)=>s+readMinorUnits(r,`${k}_minor`,k),0)/100;
     const now = new Date();
     const date = now.toISOString().slice(0,10);
@@ -103,27 +131,58 @@ router.get('/dashboard', async (req, res, next) => {
     res.render('admin/dashboard',{title:'Admin Dashboard - United Credit Bank',page:'admin-dashboard',admin,user:admin,stats,pendingCount:stats.pendingKYC+stats.pendingTransfers+stats.pendingCards+stats.pendingLoans+stats.pendingBills,recentUsers,recentTransactions});
   } catch(e){next(e);}
 });
-router.get('/users',async(req,res,next)=>{try{
-  const {search,status,verified}=req.query;const accounts=await rows('accounts',[],'created_at',1000);let users=await rows('users',[],'created_at',1000);
-  users=users.filter(u=>!isAdminUser(u)||accounts.some(a=>a.user_id===u.id&&a.account_type!=='Admin Account'));
-  if(search)users=users.filter(u=>['first_name','last_name','email','phone'].some(k=>String(u[k]||'').toLowerCase().includes(String(search).toLowerCase())));
-  if(status==='frozen')users=users.filter(u=>!!u.is_frozen);if(status==='active')users=users.filter(u=>!u.is_frozen);if(verified==='verified')users=users.filter(u=>!!u.is_verified);if(verified==='unverified')users=users.filter(u=>!u.is_verified);
-  users=await Promise.all(users.map(async u=>({...u,accounts:(await rows('accounts',[{field:'user_id',value:id(u.id)}],'created_at',100)).map(display)})));
-  res.render('admin/users',{title:'User Management - United Credit Bank',page:'admin-users',users,userAccounts:Object.fromEntries(users.map(u=>[u.id,u.accounts])),filters:req.query});
-}catch(e){next(e);}});
+router.get('/users', async (req, res, next) => {
+  try {
+    const { search, status, verified } = req.query;
+    const accounts = await rows('accounts', [], 'created_at', 1000);
+    let users = await rows('users', [], 'created_at', 1000);
+    users = users.filter(user => !isAdminUser(user) || accounts.some(account => recordHasOwnerId(account, userOwnerIds(user)) && account.account_type !== 'Admin Account'));
+    if (search) users = users.filter(user => ['first_name', 'last_name', 'email', 'phone'].some(key => String(user[key] || '').toLowerCase().includes(String(search).toLowerCase())));
+    if (status === 'frozen') users = users.filter(user => !!user.is_frozen);
+    if (status === 'active') users = users.filter(user => !user.is_frozen);
+    if (verified === 'verified') users = users.filter(user => !!user.is_verified);
+    if (verified === 'unverified') users = users.filter(user => !user.is_verified);
+    users = await Promise.all(users.map(async user => {
+      const ownerUid = firebaseOwnerUid(user, user.id);
+      const userAccounts = ownerUid ? await ownerRows('accounts', userOwnerIds(user), [], 'created_at', 100) : [];
+      return { ...user, firebaseUid: ownerUid, accounts: userAccounts };
+    }));
+    res.render('admin/users', { title: 'User Management - United Credit Bank', page: 'admin-users', users, userAccounts: Object.fromEntries(users.map(user => [user.id, user.accounts])), filters: req.query });
+  } catch (error) { next(error); }
+});
 router.get('/users/create',(_req,res)=>res.render('admin/user-create',{title:'Create Customer - United Credit Bank',page:'admin-users'}));
-router.get('/users/:id',async(req,res,next)=>{try{
-  const customer=await getUser(req.params.id);if(!customer){req.session.error='User not found.';return res.redirect('/admin/users');}
-  const [accounts,txns,cards,loans,kyc,notifications,logs]=await Promise.all([rows('accounts',[{field:'user_id',value:id(customer.id)}],'created_at',100),rows('transactions',[{field:'user_id',value:id(customer.id)}],'created_at',50),rows('cards',[{field:'user_id',value:id(customer.id)}],'created_at',100),rows('loans',[{field:'user_id',value:id(customer.id)}],'created_at',100),rows('kyc',[{field:'user_id',value:id(customer.id)}],'submitted_at',100),rows('notifications',[{field:'user_id',value:id(customer.id)}],'created_at',20),rows('audit_logs',[{field:'target_id',value:id(customer.id)},{field:'target_type',value:'user'}],'created_at',20)]);
-  const transactions=await Promise.all(txns.map(async t=>({...t,account_name:(await repo.get('accounts',id(t.account_id)))?.account_name||''})));const auditLogs=await Promise.all(logs.map(async l=>{const a=await getUser(l.admin_id);return {...l,admin_first:a?.first_name||'',admin_last:a?.last_name||''};}));
-  const safeKyc=kyc.map(safeAdminKyc),safeCards=cards.map(safeAdminCard);
-  res.render('admin/user-detail',{title:`User: ${customer.first_name} ${customer.last_name} - United Credit Bank`,page:'admin-users',user:customer,customer,accounts,transactions,cards:safeCards,loans,kyc:safeKyc,latestKyc:safeKyc[0]||null,notifications,logs:auditLogs,auditLogs,totalBalance:accounts.reduce((s,a)=>s+(a.balance||0),0),operationId:newOperationId()});
-}catch(e){next(e);}});
+router.get('/users/:id', async (req, res, next) => {
+  try {
+    const customer = await getUser(req.params.id);
+    if (!customer) { req.session.error = 'User not found.'; return res.redirect('/admin/users'); }
+    const profileId = id(customer.profileId || customer.id);
+    const ownerUid = String(customer.firebaseUid || customer.uid || '');
+    const owners = ownerIdsForIdentity(ownerUid, profileId, customer);
+    const [accounts, txns, cards, loans, kyc, notifications, profileLogs, ownerLogs] = await Promise.all([
+      ownerUid ? ownerRows('accounts', owners, [], 'created_at', 100) : [],
+      ownerUid ? ownerRows('transactions', owners, [], 'created_at', 50) : [],
+      ownerUid ? ownerRows('cards', owners, [], 'created_at', 100) : [],
+      ownerUid ? ownerRows('loans', owners, [], 'created_at', 100) : [],
+      ownerUid ? ownerRows('kyc', owners, [], 'submitted_at', 100) : [],
+      ownerUid ? ownerRows('notifications', owners, [], 'created_at', 20) : [],
+      rows('audit_logs', [{ field: 'target_id', value: profileId }, { field: 'target_type', value: 'user' }], 'created_at', 20),
+      ownerUid && ownerUid !== profileId ? rows('audit_logs', [{ field: 'target_id', value: ownerUid }, { field: 'target_type', value: 'user' }], 'created_at', 20) : []
+    ]);
+    const logs = [...new Map([...profileLogs, ...ownerLogs].map(log => [id(log.id), log])).values()];
+    const transactions = await Promise.all(txns.map(async transaction => ({ ...transaction, account_name: (await ownedAccountForUser(transaction.user_id, transaction.account_id))?.account_name || '' })));
+    const auditLogs = await Promise.all(logs.map(async log => {
+      const adminUser = await getUser(log.admin_id);
+      return { ...log, admin_first: adminUser?.first_name || '', admin_last: adminUser?.last_name || '' };
+    }));
+    const safeKyc = kyc.map(safeAdminKyc), safeCards = cards.map(safeAdminCard);
+    res.render('admin/user-detail', { title: `User: ${customer.first_name} ${customer.last_name} - United Credit Bank`, page: 'admin-users', user: customer, customer, accounts, transactions, cards: safeCards, loans, kyc: safeKyc, latestKyc: safeKyc[0] || null, notifications, logs: auditLogs, auditLogs, totalBalance: accounts.reduce((sum, account) => sum + (account.balance || 0), 0), operationId: newOperationId() });
+  } catch (error) { next(error); }
+});
 router.get('/accounts',async(req,res,next)=>{try{let accounts=await accountsWithUsers();const{search,type,status}=req.query;if(search)accounts=accounts.filter(a=>['account_number','account_name','email','first_name','last_name'].some(k=>String(a[k]||'').toLowerCase().includes(String(search).toLowerCase())));if(type&&type!=='all')accounts=accounts.filter(a=>a.account_type===type);if(status&&status!=='all')accounts=accounts.filter(a=>a.status===status);res.render('admin/accounts',{title:'Account Management - United Credit Bank',page:'admin-accounts',accounts,filters:req.query});}catch(e){next(e);}});
 router.get('/accounts/:id',async(req,res,next)=>{try{const a=display(await repo.get('accounts',req.params.id));if(!a){req.session.error='Account not found.';return res.redirect('/admin/accounts');}const[u,transactions,ledgerEntries]=await Promise.all([getUser(a.user_id),rows('transactions',[{field:'account_id',value:id(a.id)}],'created_at',100),rows('ledger_entries',[{field:'account_id',value:id(a.id)}],'created_at',200)]);const account={...a,first_name:u?.first_name||'',last_name:u?.last_name||'',email:u?.email||'',is_frozen:u?.is_frozen||false,user_name:`${u?.first_name||''} ${u?.last_name||''}`.trim()};res.render('admin/account-detail',{title:`Account ${a.account_number} - United Credit Bank`,page:'admin-accounts',account,transactions,ledgerEntries,operationId:newOperationId()});}catch(e){next(e);}});
 router.get('/cards',async(req,res,next)=>{try{
   const q=req.query;
-  let cards=await Promise.all((await rows('cards',[],'requested_at',200)).map(async c=>safeAdminCard({...await withUser(c),account_number:(await repo.get('accounts',id(c.account_id)))?.account_number||''})));
+  let cards=await Promise.all((await rows('cards',[],'requested_at',200)).map(async c=>safeAdminCard({...await withUser(c),account_number:(await ownedAccountForUser(c.user_id,c.account_id))?.account_number||''})));
   if(q.search){const term=String(q.search).toLowerCase();cards=cards.filter(c=>[c.user_name,c.cardholder_name,c.card_last4,c.user_id].some(v=>String(v||'').toLowerCase().includes(term)));}
   if(q.type&&q.type!=='all')cards=cards.filter(c=>String(c.card_type||'').toLowerCase().includes(String(q.type).toLowerCase()));
   if(q.status&&q.status!=='all')cards=cards.filter(c=>c.status===q.status);
@@ -132,7 +191,7 @@ router.get('/cards',async(req,res,next)=>{try{
 router.get('/loans',async(req,res,next)=>{try{
   const q=req.query;
   let loans=await Promise.all((await rows('loans',[],'requested_at',200)).map(async l=>{
-    const loan=display(l),u=await getUser(l.user_id),ps=await rows('loan_payments',[{field:'user_id',value:id(l.user_id)}],'created_at',500);
+    const loan=display(l),u=await getUser(l.user_id),owners=u?ownerIdsForIdentity(u.firebaseUid||u.uid,u.profileId||u.id,u):[],ps=owners.length?await ownerRows('loan_payments',owners,[],'created_at',500):[];
     return {...loan,first_name:u?.first_name||'',last_name:u?.last_name||'',email:u?.email||'',user_name:`${u?.first_name||''} ${u?.last_name||''}`.trim(),principal_amount:loan.loan_amount,monthly_payment:loan.monthly_repayment,total_amount:loan.total_repayment,term_months:loan.loan_term_months,amount_paid:(loan.total_repayment||0)-(loan.remaining_balance??loan.loan_amount??0),payment_count:ps.filter(p=>String(p.loan_id)===String(l.id)).length};
   }));
   if(q.search){const term=String(q.search).toLowerCase();loans=loans.filter(l=>[l.user_name,l.email,l.user_id,l.id].some(v=>String(v||'').toLowerCase().includes(term)));}
@@ -142,15 +201,16 @@ router.get('/loans',async(req,res,next)=>{try{
 }catch(e){next(e);}});
 router.get('/transactions',async(req,res,next)=>{try{
   const q=req.query;let ts=await rows('transactions',[],'created_at',500);
-  ts=ts.filter(t=>(!q.user||String(t.user_id)===String(q.user))&&(!q.account||String(t.account_id)===String(q.account))&&(!q.type||q.type==='all'||t.transaction_type===q.type)&&(!q.status||q.status==='all'||t.status===q.status)&&(!q.from_date||String(t.created_at||'').slice(0,10)>=q.from_date)&&(!q.to_date||String(t.created_at||'').slice(0,10)<=q.to_date));
-  let transactions=await Promise.all(ts.map(async t=>{const[u,a]=await Promise.all([getUser(t.user_id),repo.get('accounts',id(t.account_id))]);return {...display(t),first_name:u?.first_name||'',last_name:u?.last_name||'',email:u?.email||'',account_name:a?.account_name||'',account_number:a?.account_number||'',user_name:`${u?.first_name||''} ${u?.last_name||''}`.trim()};}));
+  const selectedUser=q.user?await getUser(String(q.user)):null,selectedOwners=q.user?(selectedUser?ownerIdsForIdentity(selectedUser.firebaseUid||selectedUser.uid,selectedUser.profileId||selectedUser.id,selectedUser):[String(q.user)]):[];
+  ts=ts.filter(t=>(!q.user||selectedOwners.includes(String(t.user_id)))&&(!q.account||String(t.account_id)===String(q.account))&&(!q.type||q.type==='all'||t.transaction_type===q.type)&&(!q.status||q.status==='all'||t.status===q.status)&&(!q.from_date||String(t.created_at||'').slice(0,10)>=q.from_date)&&(!q.to_date||String(t.created_at||'').slice(0,10)<=q.to_date));
+  let transactions=await Promise.all(ts.map(async t=>{const u=await getUser(t.user_id),a=await ownedAccountForUser(t.user_id,t.account_id);return {...display(t),first_name:u?.first_name||'',last_name:u?.last_name||'',email:u?.email||'',account_name:a?.account_name||'',account_number:a?.account_number||'',user_name:`${u?.first_name||''} ${u?.last_name||''}`.trim()};}));
   if(q.search){const term=String(q.search).toLowerCase();transactions=transactions.filter(t=>[t.id,t.user_name,t.email,t.reference,t.description,t.recipient_name,t.account_name,t.account_number,t.amount].some(v=>String(v||'').toLowerCase().includes(term)));}
   const min=Number(q.min_amount),max=Number(q.max_amount);if(q.min_amount!==undefined&&q.min_amount!==''&&Number.isFinite(min))transactions=transactions.filter(t=>Math.abs(Number(t.amount)||0)>=min);if(q.max_amount!==undefined&&q.max_amount!==''&&Number.isFinite(max))transactions=transactions.filter(t=>Math.abs(Number(t.amount)||0)<=max);
   const accounts=await accountsWithUsers();const totals={volume:transactions.reduce((s,t)=>s+(t.amount||0),0),completed:transactions.filter(t=>t.status==='completed').length,pending:transactions.filter(t=>t.status==='pending').length};
   res.render('admin/transactions',{title:'All Transactions - United Credit Bank',page:'admin-transactions',transactions,accounts,filters:q,totals});
 }catch(e){next(e);}});
 router.get('/transactions/new', unavailable);
-router.get('/transactions/:id',async(req,res,next)=>{try{const transaction=display(await repo.get('transactions',req.params.id));if(!transaction){req.session.error='Transaction not found.';return res.redirect('/admin/transactions');}const[user,account,ledgerEntries,billPayment]=await Promise.all([getUser(transaction.user_id),repo.get('accounts',id(transaction.account_id)),rows('ledger_entries',[{field:'transaction_id',value:id(transaction.id)}],'created_at',100),transaction.bill_payment_id?repo.get('bill_payments',id(transaction.bill_payment_id)):null]);res.render('admin/transaction-detail',{title:`Transaction ${transaction.id} - United Credit Bank`,page:'admin-transactions',transaction,user,account:display(account),ledgerEntries,billPayment:display(billPayment)});}catch(e){next(e);}});
+router.get('/transactions/:id',async(req,res,next)=>{try{const transaction=display(await repo.get('transactions',req.params.id));if(!transaction){req.session.error='Transaction not found.';return res.redirect('/admin/transactions');}const[user,account,ledgerEntries,billPayment]=await Promise.all([getUser(transaction.user_id),ownedAccountForUser(transaction.user_id,transaction.account_id),rows('ledger_entries',[{field:'transaction_id',value:id(transaction.id)}],'created_at',100),transaction.bill_payment_id?repo.get('bill_payments',id(transaction.bill_payment_id)):null]);res.render('admin/transaction-detail',{title:`Transaction ${transaction.id} - United Credit Bank`,page:'admin-transactions',transaction,user,account:display(account),ledgerEntries,billPayment:display(billPayment)});}catch(e){next(e);}});
 router.get('/approvals',async(req,res,next)=>{try{
   const section=req.query.section||'all';
   async function getApprovals(kind,collection,sort){
@@ -160,8 +220,8 @@ router.get('/approvals',async(req,res,next)=>{try{
       let x=await withUser(r);
       if(kind==='cards')x=safeAdminCard(x);
       if(kind==='kyc')x=safeAdminKyc(x);
-      if(r.account_id){const a=await repo.get('accounts',id(r.account_id));x.account_name=a?.account_name||'';x.account_number=a?.account_number||'';}
-      if(kind==='loans'){Object.assign(x,{principal_amount:r.loan_amount,monthly_payment:r.monthly_repayment,total_amount:r.total_repayment,term_months:r.loan_term_months});x.customer_accounts=(await rows('accounts',[{field:'user_id',value:id(r.user_id)}],'created_at',100)).filter(a=>String(a.status||'active')==='active');}
+      if(r.account_id){const a=await ownedAccountForUser(r.user_id,r.account_id);x.account_name=a?.account_name||'';x.account_number=a?.account_number||'';}
+      if(kind==='loans'){Object.assign(x,{principal_amount:r.loan_amount,monthly_payment:r.monthly_repayment,total_amount:r.total_repayment,term_months:r.loan_term_months});const customer=await getUser(r.user_id),owners=customer?ownerIdsForIdentity(customer.firebaseUid||customer.uid,customer.profileId||customer.id,customer):[];x.customer_accounts=(owners.length?await ownerRows('accounts',owners,[],'created_at',100):[]).filter(a=>String(a.status||'active')==='active');}
       if(kind==='bills')x.customer_ref=r.reference_number;
       return x;
     }));

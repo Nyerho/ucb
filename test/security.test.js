@@ -1,5 +1,7 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 process.env.NODE_ENV = 'test';
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-session-secret-not-for-production';
@@ -17,9 +19,53 @@ after(async () => {
   if (server) await new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
 });
 
+test('Firestore client profile create and self-update cannot forge Firebase UID binding fields', () => {
+  const rules = fs.readFileSync(path.join(__dirname, '..', 'firestore.rules'), 'utf8');
+  const protectedFields = rules.match(/function protectedUidBindingFields\(\)\s*\{([\s\S]*?)\n\s*\}/);
+  const selfUpdate = rules.match(/function validUserSelfUpdate\(\)\s*\{([\s\S]*?)\n\s*\}/);
+  const userCreate = rules.match(/function validUserCreate\(userId\)\s*\{([\s\S]*?)\n\s*\}/);
+  const ownership = rules.match(/function ownsUserData\(userId\)\s*\{([\s\S]*?)\n\s*\}/);
+  const activeAdmin = rules.match(/function isActiveAdmin\(\)\s*\{([\s\S]*?)\n\s*\}/);
+  const superAdmin = rules.match(/function isSuperAdmin\(\)\s*\{([\s\S]*?)\n\s*\}/);
+  assert.ok(protectedFields, 'expected the protected UID-binding field list');
+  assert.ok(selfUpdate, 'expected the user self-update validation rule');
+  assert.ok(userCreate, 'expected the user create validation rule');
+  assert.ok(ownership, 'expected the user ownership predicate');
+  assert.ok(activeAdmin, 'expected the active administrator authorization rule');
+  assert.ok(superAdmin, 'expected the super administrator authorization rule');
+  assert.match(selfUpdate[1], /affectedKeys\(\)\.hasAny\(protectedUidBindingFields\(\)\)/);
+  assert.match(userCreate[1], /keys\(\)\.hasAny\(protectedUidBindingFields\(\)\)/);
+  for (const field of ['firebase_uid', 'firebaseUid', 'uid', 'auth_uid', 'firebase_uid_verified_at']) {
+    assert.ok(protectedFields[1].includes(`'${field}'`), `${field} must be protected from client writes`);
+  }
+  assert.match(activeAdmin[1], /adminData\(\)\.active\s*==\s*true/);
+  assert.match(activeAdmin[1], /adminData\(\)\.role\s+in\s+\['admin',\s*'super_admin',\s*'owner'\]/);
+  assert.doesNotMatch(activeAdmin[1], /!\s*\(/, 'missing admin fields must never imply active status');
+  assert.match(superAdmin[1], /adminData\(\)\.role\s+in\s+\['super_admin',\s*'owner'\]/);
+  assert.doesNotMatch(superAdmin[1], /!\s*\(/, 'a missing role must never imply super-admin status');
+  assert.match(ownership[1], /userDoc\(userId\)\.firebase_uid\s*==\s*request\.auth\.uid/);
+  assert.match(ownership[1], /firebase_uid_verified_at\s+is\s+string/);
+  assert.match(ownership[1], /auth_uid.*==\s*request\.auth\.uid/);
+  assert.doesNotMatch(ownership[1], /data\.auth_uid\s*==\s*request\.auth\.uid/, 'stale auth_uid alone must not establish ownership');
+  assert.match(rules, /allow create: if isActiveAdmin\(\) \|\| validUserCreate\(userId\);/);
+  assert.match(rules, /allow update: if isActiveAdmin\(\) \|\| \(ownsUserData\(userId\) && validUserSelfUpdate\(\)\);/);
+});
+
 test('public Firestore diagnostics and backfill endpoint is removed', async () => {
   const response = await fetch(`${baseUrl}/api/debug/firestore?backfill_missing=1`);
   assert.equal(response.status, 404);
+});
+
+test('account opening validates Firebase UID separately from the profile document ID', () => {
+  const accountsRoute = fs.readFileSync(path.join(__dirname, '..', 'routes', 'accounts.js'), 'utf8');
+  assert.match(accountsRoute, /matchesAuthenticatedFirebaseUid\(user, uid\)/);
+  assert.doesNotMatch(accountsRoute, /String\(user\.id\s*\|\|\s*user\.uid/);
+});
+
+test('admin customer creation points email failures to secure customer recovery, not the disabled reset action', () => {
+  const adminRoute = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
+  assert.match(adminRoute, /secure Forgot Password flow or contact support/);
+  assert.doesNotMatch(adminRoute, /Use the audited reset action to try again/);
 });
 
 test('legacy public KYC upload paths are never served', async () => {
@@ -189,6 +235,12 @@ test('admin session preflight rejects missing encryption and proceeds when encry
     session.assertSessionEncryptionReady = originalProbe;
     console.error = originalError;
   }
+});
+
+test('encrypted session serialization strips request-derived identity projections', () => {
+  const { safeSessionData } = require('../middleware/firebase-session');
+  const serialized = safeSessionData({ userId: 'ucb-3', profileId: '3', user: { id: '3' }, success: 'Saved.' });
+  assert.deepEqual(serialized, { success: 'Saved.' });
 });
 
 test('production serverless readiness endpoint reports durable storage blocker', async () => {

@@ -8,7 +8,7 @@ const { sendAccountWelcomeEmail, sendLoginWelcomeEmail } = require('../services/
 const requireSessionEncryptionReady = require('../middleware/session-encryption-ready');
 const router = express.Router();
 const repo = createFirestoreRepository();
-const { getAuthenticatedProfile } = require('../services/authenticated-profile');
+const { getAuthenticatedProfile, ensureCustomerUidBinding } = require('../services/authenticated-profile');
 const nowIso = () => new Date().toISOString();
 const clean = value => String(value || '').trim();
 function sessionTokens(req, auth) {
@@ -72,16 +72,23 @@ router.post('/login', requireSessionEncryptionReady, async (req, res) => {
   if (!email || !password) { req.session.error = 'Email and password are required.'; return res.redirect('/auth/login'); }
   try {
     const auth = await firebaseAuth.signInWithPassword(email, password), uid = String(auth.localId);
-    const user = await getAuthenticatedProfile(repo, uid);
-    if (!user) { req.session.error = 'Invalid email or password.'; return res.redirect('/auth/login'); }
+    const claims = await firebaseAuth.verifyFirebaseIdToken(auth.idToken);
+    if (String(claims.uid) !== uid) throw new Error('Firebase returned inconsistent sign-in identity data.');
+    let user = await getAuthenticatedProfile(repo, uid, claims.email, claims.email_verified === true);
+    if (!user) { req.session.error = 'Your Firebase sign-in succeeded, but your UCB customer profile could not be matched. Please contact support.'; return res.redirect('/auth/login'); }
     if (user.disabled === true || user.active === false || user.is_frozen === true || Number(user.is_frozen) === 1) {
       req.session.error = 'Your account is unavailable. Please contact support.';
       return res.redirect('/auth/login');
     }
+    if (!isAdminUser(user)) user = await ensureCustomerUidBinding(repo, user, uid, claims.email, claims.email_verified === true);
+    const profileId = String(user.profileId || user.id || uid);
     sessionTokens(req, auth);
     req.session.userId = uid;
+    req.session.profileId = profileId;
     req.session.user = {
-      id: uid,
+      id: profileId,
+      profileId,
+      uid,
       first_name: user.first_name || '',
       last_name: user.last_name || '',
       email: user.email || email,
@@ -92,7 +99,9 @@ router.post('/login', requireSessionEncryptionReady, async (req, res) => {
       is_verified: Number(user.is_verified) === 1 ? 1 : 0,
       is_frozen: Number(user.is_frozen) === 1 ? 1 : 0
     };
-    sendLoginWelcomeEmail(user, { ip: req.ip, userAgent: req.get('user-agent') }).catch(error => console.error('Login email failed:', error));
+    if (hasVerifiedProfileEmail(user.email, claims.email, claims.email_verified === true)) {
+      sendLoginWelcomeEmail({ ...user, email: claims.email }, { ip: req.ip, userAgent: req.get('user-agent') }).catch(error => console.error('Login email failed:', error));
+    }
     return res.redirect(isAdminUser(user) ? '/admin/dashboard' : '/user/dashboard');
   } catch (error) {
     console.error('Login failed:', error);

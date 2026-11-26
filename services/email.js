@@ -1,4 +1,5 @@
 const { createFirestoreRepository } = require('./firestore-rest');
+const { ownerIdsForIdentity, getOwnedAccount } = require('./owner-records');
 const repository = createFirestoreRepository();
 
 const OUTGOING_TYPES = new Set(['local_transfer', 'international_transfer', 'withdrawal', 'bill_payment', 'loan_payment']);
@@ -307,10 +308,10 @@ async function sendTransactionActivityEmailById(txnId, options = {}) {
 
   const txn = await repository.get('transactions', String(txnId));
   if (!txn) return { sent: false, skipped: true };
-  const [user, account] = await Promise.all([
-    repository.get('users', String(txn.user_id)),
-    repository.get('accounts', String(txn.account_id))
-  ]);
+  const user = matchingAuthenticatedUser(txn.user_id, options.authenticatedUser);
+  if (!user) return { sent: false, skipped: true };
+  const owners = ownerIdsForIdentity(user.firebaseUid || user.uid, user.profileId || user.id, user);
+  const account = await getOwnedAccount(repository, txn.account_id, owners);
   Object.assign(txn, {
     first_name: user?.first_name || '',
     last_name: user?.last_name || '',
@@ -354,6 +355,13 @@ async function sendTransactionActivityEmailById(txnId, options = {}) {
   });
 }
 
+function matchingAuthenticatedUser(transactionUid, user) {
+  const uid = String(user?.firebaseUid || user?.uid || '').trim();
+  const email = String(user?.email || '').trim();
+  if (user?.emailVerified !== true || !uid || uid !== String(transactionUid || '').trim() || !email) return null;
+  return user;
+}
+
 module.exports = {
   getAppBaseUrl,
   isEmailConfigured,
@@ -362,5 +370,6 @@ module.exports = {
   sendLoginWelcomeEmail,
   sendPasswordResetEmail,
   sendPasswordChangedEmail,
-  sendTransactionActivityEmailById
+  sendTransactionActivityEmailById,
+  matchingAuthenticatedUser
 };

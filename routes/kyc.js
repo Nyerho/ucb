@@ -6,6 +6,8 @@ const multer = require('multer');
 const { createFirestoreRepository } = require('../services/firestore-rest');
 const { uploadObject, downloadObject, deleteObject } = require('../services/firebase-storage');
 const { requireAuth, isAdminUser, addNotification } = require('../middleware/auth');
+const { legacyProfileId } = require('../services/firebase-owner-id');
+const { ownerIdsForRequest, listByOwnerIds, recordHasOwnerId } = require('../services/owner-records');
 
 const router = express.Router();
 router.use(require('../middleware/production-pii-gate'));
@@ -27,6 +29,7 @@ const upload = multer({
   }
 });
 function uid(req) { return String(req.auth?.uid || req.auth?.sub || req.session?.userId || ''); }
+function profileDocumentId(req) { const explicit = req.session?.profileId || req.user?.profileId || req.user?.id; return String(explicit || legacyProfileId(uid(req)) || uid(req)); }
 function decorateRecord(record) {
   return { ...record, id: String(record.id), user_id: String(record.user_id), submitted_at: record.submitted_at || record.created_at || null };
 }
@@ -37,7 +40,7 @@ function storageName(owner, recordId, kind, file) {
 
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const rows = await repo.list('kyc', [{ field: 'user_id', value: uid(req) }], { orderBy: { field: 'submitted_at', direction: 'DESCENDING' } });
+    const rows = await listByOwnerIds(repo, 'kyc', ownerIdsForRequest(req), [], { orderBy: { field: 'submitted_at', direction: 'DESCENDING' } });
     const kycRecords = rows.map(decorateRecord);
     res.render('kyc/index', { title: 'Identity Verification (KYC) - United Credit Bank', page: 'kyc', kycRecords, records: kycRecords, latest: kycRecords[0] || null, documentTypes: DOCUMENT_TYPES });
   } catch (error) { console.error('KYC listing failed:', error); res.sendStatus(503); }
@@ -45,7 +48,7 @@ router.get('/', requireAuth, async (req, res) => {
 
 router.get('/submit', requireAuth, async (req, res) => {
   try {
-    const user = await repo.get('users', uid(req));
+    const user = await repo.get('users', profileDocumentId(req));
     res.render('kyc/submit', { title: 'Submit KYC - United Credit Bank', page: 'kyc', user, documentTypes: DOCUMENT_TYPES });
   } catch (error) { console.error('KYC form profile read failed:', error); res.sendStatus(503); }
 });
@@ -65,7 +68,7 @@ router.post('/submit', requireAuth, upload.fields([
     if (!String(document_number || '').trim()) { req.session.error = 'Document number is required.'; return res.redirect('/kyc/submit'); }
     if (!front) { req.session.error = 'Please upload the front of your document.'; return res.redirect('/kyc/submit'); }
     if (selectedType.requires_both && !back) { req.session.error = 'Please upload the back of your document.'; return res.redirect('/kyc/submit'); }
-    const existing = await repo.list('kyc', [{ field: 'user_id', value: owner }]);
+    const existing = await listByOwnerIds(repo, 'kyc', ownerIdsForRequest(req));
     if (existing.some((record) => record.status === 'pending')) { req.session.error = 'You already have a pending KYC submission. Please wait for review.'; return res.redirect('/kyc'); }
     if (existing.some((record) => record.status === 'approved')) { req.session.error = 'Your identity is already verified.'; return res.redirect('/kyc'); }
 
@@ -107,7 +110,7 @@ router.get('/:id/document/:kind', requireAuth, async (req, res) => {
     if (!record) return res.sendStatus(404);
     const owner = uid(req);
     const isAdmin = isAdminUser(req.user);
-    if (String(record.user_id) !== owner && !isAdmin) return res.sendStatus(404);
+    if (!recordHasOwnerId(record, ownerIdsForRequest(req)) && !isAdmin) return res.sendStatus(404);
     const objectName = String(record[field] || '');
     if (!objectName || !objectName.startsWith(`kyc/${String(record.user_id)}/`)) return res.sendStatus(404);
     const file = await downloadObject(objectName);
@@ -122,8 +125,8 @@ router.get('/:id/document/:kind', requireAuth, async (req, res) => {
 router.get('/:id', requireAuth, async (req, res) => {
   try {
     const record = await repo.get('kyc', String(req.params.id));
-    if (!record || String(record.user_id) !== uid(req)) { req.session.error = 'KYC record not found.'; return res.redirect('/kyc'); }
-    const user = await repo.get('users', String(record.user_id));
+    if (!recordHasOwnerId(record, ownerIdsForRequest(req))) { req.session.error = 'KYC record not found.'; return res.redirect('/kyc'); }
+    const user = await repo.get('users', profileDocumentId(req));
     const kyc = decorateRecord({ ...record, first_name: user?.first_name || '', last_name: user?.last_name || '', email: user?.email || '' });
     return res.render('kyc/detail', { title: 'KYC Details - United Credit Bank', page: 'kyc', kyc });
   } catch (error) { console.error('KYC detail read failed:', error); return res.sendStatus(503); }

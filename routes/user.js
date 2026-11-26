@@ -7,6 +7,8 @@ const { createFirestoreRepository } = require('../services/firestore-rest');
 const { uploadObject } = require('../services/firebase-storage');
 const { fromMinorUnits } = require('../services/money');
 const { requireAuth } = require('../middleware/auth');
+const { emailsMatch } = require('../services/authenticated-profile');
+const { ownerIdsForRequest, listByOwnerIds, recordHasOwnerId } = require('../services/owner-records');
 
 const router = express.Router();
 const repo = createFirestoreRepository();
@@ -27,6 +29,7 @@ function handleProfileUpload(req, res, next) {
   });
 }
 function hasTransferPin(user) { return Boolean(user && user.transfer_pin_hash); }
+function profileDocumentId(req) { return String(req.session.profileId || req.user?.profileId || req.user?.id || req.session.userId || ''); }
 function amount(doc, field) {
   const minor = doc[`${field}_minor`];
   return Number.isSafeInteger(minor) ? fromMinorUnits(minor) : 0;
@@ -39,11 +42,11 @@ function present(doc) {
   }
   return result;
 }
-async function ownedList(collection, uid, options = {}) {
-  return (await repo.list(collection, [{ field: 'user_id', value: uid }], options)).map(present);
+async function ownedList(collection, req, options = {}) {
+  return (await listByOwnerIds(repo, collection, ownerIdsForRequest(req), [], options)).map(present);
 }
-async function latestKyc(uid) {
-  const rows = await ownedList('kyc', uid, { orderBy: { field: 'created_at', direction: 'desc' }, limit: 1 });
+async function latestKyc(req) {
+  const rows = await ownedList('kyc', req, { orderBy: { field: 'created_at', direction: 'desc' }, limit: 1 });
   return rows[0] || null;
 }
 function completed(tx) { return tx.status === 'completed'; }
@@ -58,14 +61,14 @@ function renderError(res, error) {
 
 router.get('/dashboard', requireAuth, async (req, res) => {
   try {
-    const uid = req.session.userId;
+    const uid = req.session.userId, profileId = profileDocumentId(req), ownerIds = ownerIdsForRequest(req);
     const [user, accounts, tx, notifications, kyc, cards, loans, completedTx] = await Promise.all([
-      repo.get('users', uid), ownedList('accounts', uid), ownedList('transactions', uid, { orderBy: { field: 'created_at', direction: 'desc' }, limit: 25 }),
-      ownedList('notifications', uid, { orderBy: { field: 'created_at', direction: 'desc' }, limit: 5 }), latestKyc(uid), ownedList('cards', uid), ownedList('loans', uid),
-      repo.list('transactions', [{ field: 'user_id', value: uid }, { field: 'status', value: 'completed' }], { orderBy: { field: 'created_at', direction: 'desc' }, limit: 1000 })
+      repo.get('users', profileId), ownedList('accounts', req), ownedList('transactions', req, { orderBy: { field: 'created_at', direction: 'desc' }, limit: 25 }),
+      ownedList('notifications', req, { orderBy: { field: 'created_at', direction: 'desc' }, limit: 5 }), latestKyc(req), ownedList('cards', req), ownedList('loans', req),
+      listByOwnerIds(repo, 'transactions', ownerIds, [{ field: 'status', value: 'completed' }], { orderBy: { field: 'created_at', direction: 'desc' }, limit: 1000 })
     ]);
     const transactions = tx.map(present), completedTransactions = completedTx.map(present);
-    const pending = async (collection) => (await repo.list(collection, [{ field: 'user_id', value: uid }, { field: 'status', value: 'pending' }])).length;
+    const pending = async (collection) => (await listByOwnerIds(repo, collection, ownerIds, [{ field: 'status', value: 'pending' }])).length;
     const [pendingTransfers, pendingCards, pendingLoans] = await Promise.all([pending('transactions'), pending('cards'), pending('loans')]);
     return res.render('user/dashboard', { title: 'Dashboard - United Credit Bank', page: 'dashboard', user, accounts, transactions, notifications, kyc, cards, loans,
       totalBalance: accounts.reduce((n, x) => n + amount(x, 'balance'), 0), totalAvailable: accounts.reduce((n, x) => n + amount(x, 'available_balance'), 0),
@@ -74,7 +77,7 @@ router.get('/dashboard', requireAuth, async (req, res) => {
 });
 
 router.get('/profile', requireAuth, async (req, res) => {
-  try { return res.render('user/profile', { title: 'My Profile - United Credit Bank', page: 'profile', user: await repo.get('users', req.session.userId) }); }
+  try { return res.render('user/profile', { title: 'My Profile - United Credit Bank', page: 'profile', user: await repo.get('users', profileDocumentId(req)) }); }
   catch (error) { return renderError(res, error); }
 });
 
@@ -84,7 +87,7 @@ router.post('/profile/photo', requireAuth, handleProfileUpload, async (req, res)
   try {
     const object = await uploadObject(`profile-images/${uid}/${require('crypto').randomUUID()}`, req.file.buffer, req.file.mimetype);
     const profile_image = `gs://${object.name}`;
-    await repo.update('users', uid, { profile_image, updated_at: new Date().toISOString() });
+    await repo.update('users', profileDocumentId(req), { profile_image, updated_at: new Date().toISOString() });
     req.session.user = { ...(req.session.user || {}), profile_image };
     req.session.success = 'Profile picture updated successfully.';
     return res.redirect('/user/profile');
@@ -96,10 +99,14 @@ router.post('/profile', requireAuth, [body('first_name').trim().isLength({ min: 
   if (!errors.isEmpty()) { req.session.error = 'Please check your input and try again.'; return res.redirect('/user/profile'); }
   try {
     const { first_name, last_name, email, phone, address, city, state, postcode, date_of_birth } = req.body;
-    const uid = req.session.userId;
+    const profileId = profileDocumentId(req);
+    if (!emailsMatch(email, req.user?.email)) {
+      req.session.error = 'Email changes require the verified Firebase account workflow. Please contact support.';
+      return res.redirect('/user/profile');
+    }
     const duplicates = await repo.list('users', [{ field: 'email', value: email }], { limit: 10 });
-    if (duplicates.some((u) => u.id !== uid)) { req.session.error = 'This email is already in use.'; return res.redirect('/user/profile'); }
-    await repo.update('users', uid, { first_name, last_name, email, phone, address, city, state, postcode, date_of_birth, updated_at: new Date().toISOString() });
+    if (duplicates.some((u) => u.id !== profileId)) { req.session.error = 'This email is already in use.'; return res.redirect('/user/profile'); }
+    await repo.update('users', profileId, { first_name, last_name, email, phone, address, city, state, postcode, date_of_birth, updated_at: new Date().toISOString() });
     req.session.user = { ...(req.session.user || {}), first_name, last_name, email };
     req.session.success = 'Profile updated successfully.';
     return res.redirect('/user/profile');
@@ -107,7 +114,7 @@ router.post('/profile', requireAuth, [body('first_name').trim().isLength({ min: 
 });
 
 router.get('/settings', requireAuth, async (req, res) => {
-  try { const user = await repo.get('users', req.session.userId); return res.render('user/settings', { title: 'Settings - United Credit Bank', page: 'settings', user, hasTransferPin: hasTransferPin(user) }); }
+  try { const user = await repo.get('users', profileDocumentId(req)); return res.render('user/settings', { title: 'Settings - United Credit Bank', page: 'settings', user, hasTransferPin: hasTransferPin(user) }); }
   catch (error) { return renderError(res, error); }
 });
 
@@ -117,11 +124,11 @@ router.post('/settings/transfer-pin', requireAuth, (_req, res) => res.status(501
 
 router.get('/statements', requireAuth, async (req, res) => {
   try {
-    const accounts = await ownedList('accounts', req.session.userId);
+    const accounts = await ownedList('accounts', req);
     const selectedAccount = req.query.account ? accounts.find((a) => a.id === String(req.query.account)) : accounts[0];
     let transactions = [], statementCredits = 0, statementDebits = 0;
     if (selectedAccount) {
-      transactions = (await repo.list('transactions', [{ field: 'user_id', value: req.session.userId }, { field: 'account_id', value: selectedAccount.id }], { orderBy: { field: 'created_at', direction: 'desc' }, limit: 500 })).map(present);
+      transactions = (await listByOwnerIds(repo, 'transactions', ownerIdsForRequest(req), [{ field: 'account_id', value: selectedAccount.id }], { orderBy: { field: 'created_at', direction: 'desc' }, limit: 500 })).map(present);
       statementCredits = creditTotal(transactions); statementDebits = debitTotal(transactions);
     }
     return res.render('user/statements', { title: 'Account Statements - United Credit Bank', page: 'statements', accounts, selectedAccount, transactions, statementCredits, statementDebits });
@@ -129,7 +136,7 @@ router.get('/statements', requireAuth, async (req, res) => {
 });
 
 router.get('/beneficiaries', requireAuth, async (req, res) => {
-  try { return res.render('user/beneficiaries', { title: 'Beneficiaries - United Credit Bank', page: 'beneficiaries', beneficiaries: await ownedList('beneficiaries', req.session.userId) }); }
+  try { return res.render('user/beneficiaries', { title: 'Beneficiaries - United Credit Bank', page: 'beneficiaries', beneficiaries: await ownedList('beneficiaries', req) }); }
   catch (error) { return renderError(res, error); }
 });
 router.post('/beneficiaries/add', requireAuth, async (req, res) => {
@@ -142,18 +149,18 @@ router.post('/beneficiaries/add', requireAuth, async (req, res) => {
 router.post('/beneficiaries/delete/:id', requireAuth, async (req, res) => {
   try {
     const doc = await repo.get('beneficiaries', req.params.id);
-    if (doc && doc.user_id === req.session.userId) await repo.delete('beneficiaries', doc.id);
+    if (doc && recordHasOwnerId(doc, ownerIdsForRequest(req))) await repo.delete('beneficiaries', doc.id);
     req.session.success = 'Beneficiary removed.'; return res.redirect('/user/beneficiaries');
   } catch (error) { return renderError(res, error); }
 });
 router.get('/notifications', requireAuth, async (req, res) => {
-  try { return res.render('user/notifications', { title: 'Notifications - United Credit Bank', page: 'notifications', notifications: await ownedList('notifications', req.session.userId, { orderBy: { field: 'created_at', direction: 'desc' } }) }); }
+  try { return res.render('user/notifications', { title: 'Notifications - United Credit Bank', page: 'notifications', notifications: await ownedList('notifications', req, { orderBy: { field: 'created_at', direction: 'desc' } }) }); }
   catch (error) { return renderError(res, error); }
 });
 router.post('/notifications/read/:id', requireAuth, async (req, res) => {
   try {
     const doc = await repo.get('notifications', req.params.id);
-    if (doc && doc.user_id === req.session.userId) await repo.update('notifications', doc.id, { is_read: true });
+    if (doc && recordHasOwnerId(doc, ownerIdsForRequest(req))) await repo.update('notifications', doc.id, { is_read: true });
     return res.json({ success: true });
   } catch (error) { return res.status(503).json({ success: false, error: 'Notifications are temporarily unavailable.' }); }
 });

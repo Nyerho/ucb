@@ -5,7 +5,9 @@ const { createAdminWorkflows, normalizeUserProfile, normalizeAccountMetadata } =
 function fakeRepository(initial, { seedDefaultAdmin = true } = {}) {
   let store = structuredClone(initial);
   store.users ||= {};
+  store.admins ||= {};
   if (seedDefaultAdmin && !store.users.admin1) store.users.admin1 = { id: 'admin1', is_admin: 1 };
+  if (seedDefaultAdmin && !store.admins.admin1) store.admins.admin1 = { id: 'admin1', active: true, role: 'admin' };
   return {
     data: () => structuredClone(store),
     async runTransaction(callback) {
@@ -81,6 +83,64 @@ test('profile updates and immutable audit entries commit in one Firestore transa
   assert.equal(data.audit_logs['audit-1'].details, JSON.stringify({ changed_fields: ['first_name', 'phone'], reason: 'Customer requested correction' }));
 });
 
+test('legacy profile actions retain numeric profile IDs while owner records and notifications use the Firebase UID', async () => {
+  const repo = fakeRepository({ users: { '3': { id: '3', firebase_uid: 'ucb-3', firebase_uid_verified_at: '2026-11-25T10:00:00.000Z', first_name: 'Ada', last_name: 'Customer', is_admin: 0, is_frozen: 0, disabled: false } } });
+  const workflows = createAdminWorkflows(repo, makeOptions());
+  await workflows.updateUserProfile({
+    actorId: 'admin1', targetId: '3',
+    body: { first_name: 'Ada', phone: '+61 400 111 222', reason: 'Customer requested correction' }
+  });
+  await workflows.createAccount({
+    actorId: 'admin1', targetId: '3',
+    body: { account_type: 'Everyday Savings', reason: 'Verified customer requested account', operation_id: 'legacy-account-opening-0001' }
+  });
+  await workflows.setUserFrozen({ actorId: 'admin1', targetId: '3', action: 'freeze', reason: 'Customer requested temporary pause' });
+  await workflows.setUserFrozen({ actorId: 'admin1', targetId: '3', action: 'unfreeze', reason: 'Customer confirmed reactivation' });
+  await workflows.disableCustomer({ actorId: 'admin1', targetId: '3', reason: 'Customer requested account closure' });
+  await workflows.restoreCustomer({ actorId: 'admin1', targetId: '3', reason: 'Customer requested account restoration' });
+
+  const data = repo.data();
+  assert.equal(data.users['3'].first_name, 'Ada');
+  assert.equal(Object.values(data.accounts)[0].user_id, 'ucb-3');
+  assert.equal(Object.values(data.ledger_entries)[0].user_id, 'ucb-3');
+  const accountAudit = Object.values(data.audit_logs).find(record => record.action === 'create_account');
+  assert.equal(JSON.parse(accountAudit.details).user_id, 'ucb-3');
+  assert.ok(Object.values(data.notifications).length >= 6);
+  assert.ok(Object.values(data.notifications).every(record => record.user_id === 'ucb-3'));
+  assert.ok(Object.values(data.audit_logs).filter(record => record.target_type === 'user').every(record => record.target_id === '3'));
+});
+
+test('direct numeric Firebase UID profiles retain the numeric UID as the financial owner after verified binding', async () => {
+  const repo = fakeRepository({ users: { '12345': { id: '12345', firebase_uid: '12345', firebase_uid_verified_at: '2026-11-25T10:00:00.000Z', is_admin: 0 } } });
+  const workflows = createAdminWorkflows(repo, makeOptions());
+  await workflows.createAccount({
+    actorId: 'admin1', targetId: '12345',
+    body: { account_type: 'Everyday Savings', reason: 'Direct UID customer account', operation_id: 'direct-numeric-account-0001' }
+  });
+  assert.equal(Object.values(repo.data().accounts)[0].user_id, '12345');
+});
+
+test('legacy numeric customer operations fail closed until a verified Firebase UID binding exists', async () => {
+  const repo = fakeRepository({ users: { '3': { id: '3', first_name: 'Ada', is_admin: 0, disabled: false } } });
+  const workflows = createAdminWorkflows(repo, makeOptions());
+  await assert.rejects(() => workflows.createAccount({
+    actorId: 'admin1', targetId: '3',
+    body: { account_type: 'Everyday Savings', reason: 'Customer requested a new account', operation_id: 'legacy-unbound-account-0001' }
+  }), /no verified Firebase UID binding/);
+  assert.deepEqual(repo.data().accounts || {}, {});
+  assert.deepEqual(repo.data().ledger_entries || {}, {});
+  assert.deepEqual(repo.data().audit_logs || {}, {});
+});
+
+test('administrator password-reset delivery fails closed when the target Firebase email cannot be verified currently', async () => {
+  const repo = fakeRepository({ users: { customer1: { id: 'customer1', email: 'stale@example.test', is_admin: 0 } } });
+  const workflows = createAdminWorkflows(repo, makeOptions());
+  await assert.rejects(() => workflows.recordPasswordResetRequest({
+    actorId: 'admin1', targetId: 'customer1', reason: 'Customer requested a password reset'
+  }), /current Firebase Auth email cannot be verified/);
+  assert.deepEqual(repo.data().audit_logs || {}, {});
+});
+
 test('user freeze changes are auditable, idempotent, and cannot target administrators or the acting admin', async () => {
   const repo = fakeRepository({ users: {
     customer1: { id: 'customer1', is_admin: 0, is_frozen: 0 },
@@ -149,7 +209,18 @@ test('audit reasons and account status values reject non-string input', async ()
 test('each transaction rejects writes after the acting administrator is demoted', async () => {
   const repo = fakeRepository({ accounts: { '1': { id: '1', status: 'active' } } });
   const workflows = createAdminWorkflows(repo, makeOptions());
-  await repo.runTransaction(async tx => tx.update('users', 'admin1', { is_admin: 0 }));
+  await repo.runTransaction(async tx => tx.update('admins', 'admin1', { active: false }));
+  await assert.rejects(() => workflows.changeAccountStatus({ actorId: 'admin1', accountId: '1', status: 'frozen', reason: 'Customer reported stolen credentials' }), /Administrator permissions are no longer active/);
+  assert.equal(repo.data().accounts['1'].status, 'active');
+  assert.deepEqual(repo.data().audit_logs || {}, {});
+});
+
+test('missing admins document rejects writes even if a duplicate users profile has administrator flags', async () => {
+  const repo = fakeRepository({
+    users: { admin1: { id: 'admin1', is_admin: 1, role: 'super_admin' } },
+    accounts: { '1': { id: '1', status: 'active' } }
+  }, { seedDefaultAdmin: false });
+  const workflows = createAdminWorkflows(repo, makeOptions());
   await assert.rejects(() => workflows.changeAccountStatus({ actorId: 'admin1', accountId: '1', status: 'frozen', reason: 'Customer reported stolen credentials' }), /Administrator permissions are no longer active/);
   assert.equal(repo.data().accounts['1'].status, 'active');
   assert.deepEqual(repo.data().audit_logs || {}, {});
@@ -211,11 +282,28 @@ test('balance adjustments are idempotent and atomically append a transaction, le
   await assert.rejects(() => workflows.adjustAccountBalance({ ...operation, body: { ...operation.body, operation_id: 'operation-debit-0001', adjustment_type: 'debit', amount: '900.00' } }), /Debit exceeds the available balance/);
 });
 
+test('balance adjustment on a legacy-profile-owned account writes transaction, ledger, and notification under its verified Firebase UID', async () => {
+  const repo = fakeRepository({
+    users: { '3': { id: '3', firebase_uid: 'ucb-3', firebase_uid_verified_at: '2026-11-25T10:00:00.000Z', is_admin: 0 } },
+    accounts: { acc1: { id: 'acc1', user_id: '3', status: 'active', currency: 'AUD', balance_minor: 100000, available_balance_minor: 100000 } }
+  });
+  const workflows = createAdminWorkflows(repo, makeOptions());
+  await workflows.adjustAccountBalance({
+    actorId: 'admin1', accountId: 'acc1',
+    body: { account_id: 'acc1', adjustment_type: 'credit', amount: '10.00', reference: 'CASE-LEGACY-1', reason: 'Verified legacy account correction', operation_id: 'legacy-owner-adjustment-0001' }
+  });
+  const data = repo.data();
+  assert.equal(data.accounts.acc1.balance_minor, 101000);
+  assert.ok(Object.values(data.transactions).every(record => record.user_id === 'ucb-3'));
+  assert.ok(Object.values(data.ledger_entries).every(record => record.user_id === 'ucb-3'));
+  assert.ok(Object.values(data.notifications).every(record => record.user_id === 'ucb-3'));
+});
+
 test('pending reserved transfers settle only with a verified reference and rejection releases the hold into the ledger', async () => {
   const fixture = () => fakeRepository({
-    users: { customer1: { id: 'customer1', is_admin: 0 } },
-    accounts: { acc1: { id: 'acc1', user_id: 'customer1', status: 'active', currency: 'AUD', balance_minor: 100000, available_balance_minor: 95000 } },
-    transactions: { txn1: { id: 'txn1', user_id: 'customer1', account_id: 'acc1', transaction_type: 'local_transfer', amount_minor: 5000, fee_minor: 0, status: 'pending', currency: 'AUD' } },
+    users: { '3': { id: '3', firebase_uid: 'ucb-3', firebase_uid_verified_at: '2026-11-25T10:00:00.000Z', is_admin: 0 } },
+    accounts: { acc1: { id: 'acc1', user_id: 'ucb-3', status: 'active', currency: 'AUD', balance_minor: 100000, available_balance_minor: 95000 } },
+    transactions: { txn1: { id: 'txn1', user_id: 'ucb-3', account_id: 'acc1', transaction_type: 'local_transfer', amount_minor: 5000, fee_minor: 0, status: 'pending', currency: 'AUD' } },
     ledger_entries: { hold1: { id: 'hold1', transaction_id: 'txn1', entry_type: 'debit', amount_minor: 5000, status: 'pending' } }
   });
   const approveRepo = fixture();
@@ -226,6 +314,7 @@ test('pending reserved transfers settle only with a verified reference and rejec
   assert.equal(approveRepo.data().accounts.acc1.available_balance_minor, 95000);
   assert.equal(approveRepo.data().transactions.txn1.status, 'completed');
   assert.equal(approveRepo.data().transactions.txn1.settlement_reference, 'BANK-SETTLE-1001');
+  assert.equal(approveRepo.data().transactions.txn1.user_id, 'ucb-3');
 
   const rejectRepo = fixture();
   const reject = createAdminWorkflows(rejectRepo, makeOptions());
@@ -238,11 +327,47 @@ test('pending reserved transfers settle only with a verified reference and rejec
   assert.ok(Object.values(rejected.ledger_entries).some(entry => entry.entry_type === 'hold_release' && entry.amount_minor === 5000));
 });
 
+test('admin settlement matches mixed UID/profile-ID transaction, bill, and account owners but writes new ledgers and notifications by UID', async () => {
+  const repo = fakeRepository({
+    users: { '3': { id: '3', firebase_uid: 'ucb-3', firebase_uid_verified_at: '2026-11-25T10:00:00.000Z', is_admin: 0, disabled: false } },
+    accounts: { acc1: { id: 'acc1', user_id: '3', status: 'active', currency: 'AUD', balance_minor: 20000, available_balance_minor: 20000 } },
+    transactions: { txn1: { id: 'txn1', user_id: 'ucb-3', account_id: 'acc1', transaction_type: 'bill_payment', amount_minor: 10000, status: 'pending', currency: 'AUD' } },
+    bill_payments: { bill1: { id: 'bill1', user_id: '3', account_id: 'acc1', amount_minor: 10000, status: 'pending' } }
+  });
+  const workflows = createAdminWorkflows(repo, makeOptions());
+  await workflows.reviewTransaction({
+    actorId: 'admin1', transactionId: 'txn1', action: 'approve',
+    body: { reason: 'Matched bill payment records across the verified owner IDs', settlement_reference: 'BILL-SETTLE-1003' }
+  });
+  const data = repo.data();
+  assert.equal(data.accounts.acc1.balance_minor, 10000);
+  assert.equal(data.accounts.acc1.available_balance_minor, 10000);
+  assert.equal(data.transactions.txn1.status, 'completed');
+  assert.equal(data.bill_payments.bill1.status, 'completed');
+  assert.ok(Object.values(data.ledger_entries).every(entry => entry.user_id === 'ucb-3'));
+  assert.ok(Object.values(data.notifications).every(notification => notification.user_id === 'ucb-3'));
+});
+
+test('settlement fails closed when a UID-owned transaction has no verified numeric-profile binding', async () => {
+  const repo = fakeRepository({
+    users: { '3': { id: '3', is_admin: 0 } },
+    accounts: { acc1: { id: 'acc1', user_id: 'ucb-3', status: 'active', currency: 'AUD', balance_minor: 100000, available_balance_minor: 95000 } },
+    transactions: { txn1: { id: 'txn1', user_id: 'ucb-3', account_id: 'acc1', transaction_type: 'local_transfer', amount_minor: 5000, status: 'pending', currency: 'AUD' } }
+  });
+  const workflows = createAdminWorkflows(repo, makeOptions());
+  await assert.rejects(() => workflows.reviewTransaction({
+    actorId: 'admin1', transactionId: 'txn1', action: 'reject', body: { reason: 'Unbound customer ownership' }
+  }), /Customer record is unavailable/);
+  assert.equal(repo.data().transactions.txn1.status, 'pending');
+  assert.equal(repo.data().accounts.acc1.balance_minor, 100000);
+  assert.deepEqual(repo.data().audit_logs || {}, {});
+});
+
 test('partially reserved transfers subtract only the unreserved amount from available funds', async () => {
   const repo = fakeRepository({
-    users: { customer1: { id: 'customer1', is_admin: 0 } },
-    accounts: { acc1: { id: 'acc1', user_id: 'customer1', status: 'active', currency: 'AUD', balance_minor: 100000, available_balance_minor: 90000 } },
-    transactions: { txn1: { id: 'txn1', user_id: 'customer1', account_id: 'acc1', transaction_type: 'local_transfer', amount_minor: 5000, status: 'pending', reserved_minor: 2500, currency: 'AUD' } }
+    users: { '3': { id: '3', firebase_uid: 'ucb-3', firebase_uid_verified_at: '2026-11-25T10:00:00.000Z', is_admin: 0 } },
+    accounts: { acc1: { id: 'acc1', user_id: 'ucb-3', status: 'active', currency: 'AUD', balance_minor: 100000, available_balance_minor: 90000 } },
+    transactions: { txn1: { id: 'txn1', user_id: 'ucb-3', account_id: 'acc1', transaction_type: 'local_transfer', amount_minor: 5000, status: 'pending', reserved_minor: 2500, currency: 'AUD' } }
   });
   const workflows = createAdminWorkflows(repo, makeOptions());
   await workflows.reviewTransaction({ actorId: 'admin1', transactionId: 'txn1', action: 'approve', body: { reason: 'Verified partial transfer hold', settlement_reference: 'BANK-PARTIAL-1002' } });
@@ -252,28 +377,32 @@ test('partially reserved transfers subtract only the unreserved amount from avai
 
 test('KYC approval requires evidence for real Firebase Storage object paths', async () => {
   const repo = fakeRepository({
-    users: { customer1: { id: 'customer1', is_admin: 0, is_verified: 0 } },
-    kyc: { kyc1: { id: 'kyc1', user_id: 'customer1', document_type: 'Drivers Licence', document_front: 'kyc/customer1/kyc1/front.pdf', document_back: 'kyc/customer1/kyc1/back.pdf', status: 'pending' } }
+    users: { '3': { id: '3', firebase_uid: 'ucb-3', firebase_uid_verified_at: '2026-11-25T10:00:00.000Z', is_admin: 0, is_verified: 0 } },
+    kyc: { kyc1: { id: 'kyc1', user_id: 'ucb-3', document_type: 'Drivers Licence', document_front: 'kyc/ucb-3/kyc1/front.pdf', document_back: 'kyc/ucb-3/kyc1/back.pdf', status: 'pending' } }
   });
   const workflows = createAdminWorkflows(repo, makeOptions());
   const request = { actorId: 'admin1', recordId: 'kyc1', action: 'approve', body: { reason: 'Documents verified against customer profile' } };
   await assert.rejects(() => workflows.reviewKyc(request), /Open and verify the submitted identity files/);
-  const result = await workflows.reviewKyc({ ...request, documentEvidence: { document_front: 'kyc/customer1/kyc1/front.pdf', document_back: 'kyc/customer1/kyc1/back.pdf' } });
+  const result = await workflows.reviewKyc({ ...request, documentEvidence: { document_front: 'kyc/ucb-3/kyc1/front.pdf', document_back: 'kyc/ucb-3/kyc1/back.pdf' } });
   assert.equal(result.status, 'approved');
-  assert.equal(repo.data().users.customer1.is_verified, 1);
+  assert.equal(repo.data().users['3'].is_verified, 1);
+  assert.equal(repo.data().kyc.kyc1.user_id, 'ucb-3');
   assert.equal(repo.data().kyc.kyc1.reviewed_by, 'admin1');
 });
 
 test('card approvals remain non-activatable until manual issuer fulfillment and status changes are audited', async () => {
   const repo = fakeRepository({
-    users: { customer1: { id: 'customer1', is_admin: 0, is_verified: 1, is_frozen: 0 } },
-    accounts: { acc1: { id: 'acc1', user_id: 'customer1', status: 'active', balance_minor: 0, available_balance_minor: 0 } },
-    cards: { card1: { id: 'card1', user_id: 'customer1', account_id: 'acc1', card_type: 'Debit Card', status: 'pending' } }
+    users: { '3': { id: '3', firebase_uid: 'ucb-3', firebase_uid_verified_at: '2026-11-25T10:00:00.000Z', is_admin: 0, is_verified: 0, is_frozen: 0 } },
+    accounts: { acc1: { id: 'acc1', user_id: '3', status: 'active', balance_minor: 0, available_balance_minor: 0 } },
+    kyc: { kyc1: { id: 'kyc1', user_id: '3', status: 'approved' } },
+    cards: { card1: { id: 'card1', user_id: 'ucb-3', account_id: 'acc1', card_type: 'Debit Card', status: 'pending' } }
   });
   const workflows = createAdminWorkflows(repo, makeOptions());
   const result = await workflows.reviewCard({ actorId: 'admin1', cardId: 'card1', action: 'approve', body: { reason: 'Application passed identity review' } });
   assert.equal(result.status, 'awaiting_issuer');
   assert.equal(repo.data().cards.card1.fulfillment_status, 'manual_pending');
+  assert.equal(repo.data().cards.card1.user_id, 'ucb-3');
+  assert.ok(Object.values(repo.data().notifications).every(notification => notification.user_id === 'ucb-3'));
   await assert.rejects(() => workflows.changeCardStatus({ actorId: 'admin1', cardId: 'card1', status: 'active', reason: 'Activation attempted before issuance' }), /Issuer fulfillment must be confirmed/);
   const frozen = await workflows.changeCardStatus({ actorId: 'admin1', cardId: 'card1', status: 'frozen', reason: 'Hold pending issuer investigation' });
   assert.equal(frozen.status, 'frozen');
@@ -285,9 +414,9 @@ test('card approvals remain non-activatable until manual issuer fulfillment and 
 
 test('loan approval requires funding evidence and atomically credits only the owned account with ledger and audit records', async () => {
   const repo = fakeRepository({
-    users: { customer1: { id: 'customer1', is_admin: 0, is_verified: 1, disabled: false } },
-    accounts: { acc1: { id: 'acc1', user_id: 'customer1', status: 'active', currency: 'AUD', balance_minor: 500000, available_balance_minor: 500000 } },
-    loans: { loan1: { id: 'loan1', user_id: 'customer1', account_id: 'acc1', loan_type: 'Personal Loan', loan_amount_minor: 200000, remaining_balance_minor: 200000, loan_term_months: 12, interest_rate: 10, status: 'pending' } }
+    users: { '3': { id: '3', firebase_uid: 'ucb-3', firebase_uid_verified_at: '2026-11-25T10:00:00.000Z', is_admin: 0, is_verified: 1, disabled: false } },
+    accounts: { acc1: { id: 'acc1', user_id: '3', status: 'active', currency: 'AUD', balance_minor: 500000, available_balance_minor: 500000 } },
+    loans: { loan1: { id: 'loan1', user_id: 'ucb-3', account_id: 'acc1', loan_type: 'Personal Loan', loan_amount_minor: 200000, remaining_balance_minor: 200000, loan_term_months: 12, interest_rate: 10, status: 'pending' } }
   });
   const workflows = createAdminWorkflows(repo, makeOptions());
   const request = { actorId: 'admin1', loanId: 'loan1', action: 'approve', body: { reason: 'Approved after underwriting review' } };
@@ -298,8 +427,11 @@ test('loan approval requires funding evidence and atomically credits only the ow
   assert.equal(data.accounts.acc1.balance_minor, 700000);
   assert.equal(data.accounts.acc1.available_balance_minor, 700000);
   assert.equal(data.loans.loan1.status, 'disbursed');
+  assert.equal(data.loans.loan1.user_id, 'ucb-3');
   assert.equal(data.loans.loan1.settlement_reference, 'FUNDING-REF-2031');
   assert.equal(Object.values(data.transactions)[0].transaction_type, 'loan_disbursement');
+  assert.equal(Object.values(data.transactions)[0].user_id, 'ucb-3');
+  assert.ok(Object.values(data.notifications).every(notification => notification.user_id === 'ucb-3'));
   assert.equal(Object.values(data.ledger_entries)[0].amount_minor, 200000);
   assert.ok(Object.values(data.audit_logs)[0].details.includes('FUNDING-REF-2031'));
 });

@@ -146,7 +146,8 @@ async function getServiceAccessToken(scope = FIRESTORE_SCOPE) {
 
 async function firestoreRequest(path, { method = 'GET', body, query } = {}) {
   const projectId = envValue('FIREBASE_PROJECT_ID');
-  const url = new URL(`${baseUrl(projectId)}${path ? `/${path}` : ''}`);
+  const pathSuffix = path ? (path.startsWith(':') ? path : `/${path}`) : '';
+  const url = new URL(`${baseUrl(projectId)}${pathSuffix}`);
   if (query) {
     const entries = Array.isArray(query) ? query : Object.entries(query);
     for (const [key, value] of entries) {

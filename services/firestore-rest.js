@@ -101,6 +101,10 @@ function documentPath(collection, id) {
   return `${validateSegment(collection, 'collection')}/${encodeURIComponent(validateSegment(id, 'document id'))}`;
 }
 
+function documentResourceName(collection, id) {
+  return `projects/${encodeURIComponent(envValue('FIREBASE_PROJECT_ID'))}/databases/(default)/documents/${documentPath(collection, id)}`;
+}
+
 async function getServiceAccessToken(scope = FIRESTORE_SCOPE) {
   const now = Math.floor(Date.now() / 1000);
   const cached = serviceTokenCache.get(scope);
@@ -291,21 +295,21 @@ function createFirestoreRepository() {
           return runQuery(collection, filters, options, transaction);
         },
         set(collection, id, data) {
-          writes.push({ update: { name: `${baseUrl(envValue('FIREBASE_PROJECT_ID'))}/${documentPath(collection, id)}`, fields: encodeFields(data) } });
+          writes.push({ update: { name: documentResourceName(collection, id), fields: encodeFields(data) } });
         },
         create(collection, id, data) {
-          writes.push({ update: { name: `${baseUrl(envValue('FIREBASE_PROJECT_ID'))}/${documentPath(collection, id)}`, fields: encodeFields(data) }, currentDocument: { exists: false } });
+          writes.push({ update: { name: documentResourceName(collection, id), fields: encodeFields(data) }, currentDocument: { exists: false } });
         },
         update(collection, id, data) {
           const fields = encodeFields(data);
           writes.push({
-            update: { name: `${baseUrl(envValue('FIREBASE_PROJECT_ID'))}/${documentPath(collection, id)}`, fields },
+            update: { name: documentResourceName(collection, id), fields },
             updateMask: { fieldPaths: Object.keys(fields) },
             currentDocument: { exists: true }
           });
         },
         delete(collection, id) {
-          writes.push({ delete: `${baseUrl(envValue('FIREBASE_PROJECT_ID'))}/${documentPath(collection, id)}`, currentDocument: { exists: true } });
+          writes.push({ delete: documentResourceName(collection, id), currentDocument: { exists: true } });
         }
       };
       try {

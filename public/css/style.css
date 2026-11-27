@@ -1356,6 +1356,20 @@ a:hover {
   width: 260px;
 }
 
+@media (min-width: 992px) {
+  .sidebar.offcanvas-lg {
+    display: flex;
+    position: sticky;
+    top: 0;
+    bottom: auto;
+    visibility: visible;
+    transform: none;
+    pointer-events: auto;
+    max-width: 260px;
+    z-index: auto;
+  }
+}
+
 .sidebar .offcanvas-header {
   border-bottom: 1px solid var(--border);
 }
